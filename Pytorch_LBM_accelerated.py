@@ -1,36 +1,21 @@
 from __future__ import annotations
 import torch
+import time
 import matplotlib.pyplot as plt
-
-
-def get_memory_usage():
-    """Get current GPU memory usage if available."""
-    if torch.cuda.is_available():
-        allocated = torch.cuda.memory_allocated() / 1024**2  # MB
-        cached = torch.cuda.memory_reserved() / 1024**2     # MB
-        return f"GPU: {allocated:.1f}MB allocated, {cached:.1f}MB cached"
-    else:
-        return "CPU mode"
 
 # ────────────────────────── Configuration ────────────────────────────
 DEVICE: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 Nx, Ny = 3000, 3000               # grid resolution (x, y) 
-tau = 0.6                        # relaxation time 
+tau = 1.0/1.8                        # relaxation time 
 u_lid = 0.05                     # lid velocity (lattice units)
-max_iter = 100               # hard iteration cap
-check_it = 100                  # test convergence every N iters - reduced frequency for performance
-viz_every = 50                 # live‑plot refresh interval
+max_iter = 100000                   # hard iteration cap
+viz_every = 50                   # live‑plot refresh interval
 rho0 = 1.0                      # initial density
 
 # Visualization control
 enable_plotting = False          # Set to False to disable all plotting for performance
 show_final_plot = False          # Set to False to disable final streamlines plot
 
-# Performance monitoring
-perf_every = 10000               # BLUPS calculation interval - reduced frequency for performance
-
-#time 
-import time
 
 # ───────────────────────── Lattice constants ─────────────────────────
 c = torch.tensor([[ 0, 0], [ 1, 0], [ 0, 1], [-1, 0], [ 0,-1],
@@ -39,93 +24,162 @@ w = torch.tensor([4/9] + [1/9]*4 + [1/36]*4, dtype=torch.float32, device=DEVICE)
 # Split components for dot‑products
 cx, cy = c[:, 0], c[:, 1]
 
-# ────────────────────────── Helper functions ─────────────────────────
-
-def feq(rho: torch.Tensor, u: torch.Tensor, out: torch.Tensor = None) -> torch.Tensor:
-    """D2Q9 equilibrium distribution."""
-    cu  = u[..., 0, None] * cx + u[..., 1, None] * cy
-    usq = (u**2).sum(-1, keepdim=True)
-    result = rho[..., None] * w * (1 + 3*cu + 4.5*cu**2 - 1.5*usq)
-    if out is not None:
-        out.copy_(result)
-        return out
-    return result
-
-#@torch.compile
-def lbm_step(f: torch.Tensor, f_temp: torch.Tensor, feq_temp: torch.Tensor, 
-             rho: torch.Tensor, u: torch.Tensor, u_lid_tensor: torch.Tensor,
-             cx: torch.Tensor, cy: torch.Tensor, tau: float) -> None:
-    """Complete LBM timestep with torch.compile optimization - all operations fused."""
-    
-    # Collision (BGK) - reuse feq_temp buffer
+# Strategic torch.compile with explicit returns for proper updates
+@torch.compile()
+def collision_streaming_step(f, rho, u, cx, cy, w, inv_tau):
+    """Compiled collision step with explicit return."""
     cu = u[..., 0, None] * cx + u[..., 1, None] * cy
     usq = (u**2).sum(-1, keepdim=True)
-    feq_temp.copy_(rho[..., None] * w * (1 + 3*cu + 4.5*cu**2 - 1.5*usq))
-    f += (feq_temp - f) / tau
+    feq = rho[..., None] * w * (1 + 3*cu + 4.5*cu**2 - 1.5*usq)
+    f = f + (feq - f) * inv_tau
+    f_streamed = torch.empty_like(f)
+    f_streamed[..., 0] = f[..., 0]
+    f_streamed[..., 1] = torch.roll(f[..., 1], shifts=( 0,  1), dims=(0, 1))
+    f_streamed[..., 2] = torch.roll(f[..., 2], shifts=(-1,  0), dims=(0, 1))
+    f_streamed[..., 3] = torch.roll(f[..., 3], shifts=( 0, -1), dims=(0, 1))
+    f_streamed[..., 4] = torch.roll(f[..., 4], shifts=( 1,  0), dims=(0, 1))
+    f_streamed[..., 5] = torch.roll(f[..., 5], shifts=(-1,  1), dims=(0, 1))
+    f_streamed[..., 6] = torch.roll(f[..., 6], shifts=(-1, -1), dims=(0, 1))
+    f_streamed[..., 7] = torch.roll(f[..., 7], shifts=( 1, -1), dims=(0, 1))
+    f_streamed[..., 8] = torch.roll(f[..., 8], shifts=( 1,  1), dims=(0, 1))
+    return f_streamed
 
-    # Streaming - use original torch.roll (optimized by torch.compile)
-    f_temp[..., 0] = f[..., 0]
-    f_temp[..., 1] = torch.roll(f[..., 1], shifts=( 0,  1), dims=(0, 1))
-    f_temp[..., 2] = torch.roll(f[..., 2], shifts=(-1,  0), dims=(0, 1))
-    f_temp[..., 3] = torch.roll(f[..., 3], shifts=( 0, -1), dims=(0, 1))
-    f_temp[..., 4] = torch.roll(f[..., 4], shifts=( 1,  0), dims=(0, 1))
-    f_temp[..., 5] = torch.roll(f[..., 5], shifts=(-1,  1), dims=(0, 1))
-    f_temp[..., 6] = torch.roll(f[..., 6], shifts=(-1, -1), dims=(0, 1))
-    f_temp[..., 7] = torch.roll(f[..., 7], shifts=( 1, -1), dims=(0, 1))
-    f_temp[..., 8] = torch.roll(f[..., 8], shifts=( 1,  1), dims=(0, 1))
+
+@torch.compile()
+def compute_macroscopic(f, cx, cy):
+    """Compiled macroscopic field computation without torch.sum for better performance."""
+    # Manual density computation - faster than torch.sum
+    rho = f[..., 0] + f[..., 1] + f[..., 2] + f[..., 3] + f[..., 4] + f[..., 5] + f[..., 6] + f[..., 7] + f[..., 8]
     
-    # Swap buffers (in-place copy)
-    f.copy_(f_temp)
+    u_x = (f[..., 1] * cx[1] + f[..., 2] * cx[2] + f[..., 3] * cx[3] + f[..., 4] * cx[4] + 
+           f[..., 5] * cx[5] + f[..., 6] * cx[6] + f[..., 7] * cx[7] + f[..., 8] * cx[8]) / rho
+    
+    u_y = (f[..., 1] * cy[1] + f[..., 2] * cy[2] + f[..., 3] * cy[3] + f[..., 4] * cy[4] + 
+           f[..., 5] * cy[5] + f[..., 6] * cy[6] + f[..., 7] * cy[7] + f[..., 8] * cy[8]) / rho
+    
+    # Manual velocity tensor construction - faster than torch.stack
+    u = torch.empty((*f.shape[:-1], 2), device=f.device, dtype=f.dtype)
+    u[..., 0] = u_x
+    u[..., 1] = u_y
+    
+    # Enforce no-slip conditions (but NOT on the moving lid at top!)
+    u[:, 0, :] = 0.0   # left wall
+    u[:, -1, :] = 0.0  # right wall
+    u[0, :, :] = 0.0   # bottom wall
+    # Note: top wall (u[-1, :, :]) is NOT set to zero - it's the moving lid!
+    
+    return rho, u
 
-    # Boundaries - bounce back (optimized)
-    # Left wall (x = 0): swap 1↔3, 5↔6, 8↔7
-    f[:, 0, [1, 5, 8]], f[:, 0, [3, 6, 7]] = f[:, 0, [3, 6, 7]], f[:, 0, [1, 5, 8]]
-    # Right wall (x = Nx‑1): swap 3↔1, 6↔5, 7↔8
-    f[:, -1, [3, 6, 7]], f[:, -1, [1, 5, 8]] = f[:, -1, [1, 5, 8]], f[:, -1, [3, 6, 7]]
-    # Bottom wall (y = 0): swap 2↔4, 5↔7, 6↔8
-    f[0, :, [2, 5, 6]], f[0, :, [4, 7, 8]] = f[0, :, [4, 7, 8]], f[0, :, [2, 5, 6]]
+@torch.compile()
+def apply_boundary_conditions(f, u_lid_tensor, cx, cy, w):
+    """Compiled boundary conditions using torch.compile friendly operations."""
+    
+    # Bounce-back boundaries using separate operations instead of simultaneous swaps
+    # Left wall (x = 0): directions 1,5,8 bounce to 3,6,7
+    temp_1 = f[:, 0, 1].clone()
+    temp_5 = f[:, 0, 5].clone()
+    temp_8 = f[:, 0, 8].clone()
+    f[:, 0, 1] = f[:, 0, 3]
+    f[:, 0, 5] = f[:, 0, 6]
+    f[:, 0, 8] = f[:, 0, 7]
+    f[:, 0, 3] = temp_1
+    f[:, 0, 6] = temp_5
+    f[:, 0, 7] = temp_8
+    
+    # Right wall (x = Nx-1): directions 3,6,7 bounce to 1,5,8
+    temp_3 = f[:, -1, 3].clone()
+    temp_6 = f[:, -1, 6].clone()
+    temp_7 = f[:, -1, 7].clone()
+    f[:, -1, 3] = f[:, -1, 1]
+    f[:, -1, 6] = f[:, -1, 5]
+    f[:, -1, 7] = f[:, -1, 8]
+    f[:, -1, 1] = temp_3
+    f[:, -1, 5] = temp_6
+    f[:, -1, 8] = temp_7
+    
+    # Bottom wall (y = 0): directions 2,5,6 bounce to 4,7,8
+    temp_2 = f[0, :, 2].clone()
+    temp_5_bot = f[0, :, 5].clone()
+    temp_6_bot = f[0, :, 6].clone()
+    f[0, :, 2] = f[0, :, 4]
+    f[0, :, 5] = f[0, :, 7]
+    f[0, :, 6] = f[0, :, 8]
+    f[0, :, 4] = temp_2
+    f[0, :, 7] = temp_5_bot
+    f[0, :, 8] = temp_6_bot
+    
+    # Moving lid boundary (top wall) - avoid .sum() and complex indexing
+    # Manual sum instead of .sum(-1)
+    rho_top = (f[-1, :, 0] + f[-1, :, 1] + f[-1, :, 3] + 
+               f[-1, :, 2] + f[-1, :, 5] + f[-1, :, 6] + 
+               2.0 * f[-1, :, 4])
+    
+    # Precompute lid velocity dot products
+    cu_top_0 = u_lid_tensor[0] * cx[0] + u_lid_tensor[1] * cy[0]
+    cu_top_1 = u_lid_tensor[0] * cx[1] + u_lid_tensor[1] * cy[1]
+    cu_top_2 = u_lid_tensor[0] * cx[2] + u_lid_tensor[1] * cy[2]
+    cu_top_3 = u_lid_tensor[0] * cx[3] + u_lid_tensor[1] * cy[3]
+    cu_top_4 = u_lid_tensor[0] * cx[4] + u_lid_tensor[1] * cy[4]
+    cu_top_5 = u_lid_tensor[0] * cx[5] + u_lid_tensor[1] * cy[5]
+    cu_top_6 = u_lid_tensor[0] * cx[6] + u_lid_tensor[1] * cy[6]
+    cu_top_7 = u_lid_tensor[0] * cx[7] + u_lid_tensor[1] * cy[7]
+    cu_top_8 = u_lid_tensor[0] * cx[8] + u_lid_tensor[1] * cy[8]
+    
+    # Manual usq calculation instead of tensor operations
+    usq_top = u_lid_tensor[0] * u_lid_tensor[0] + u_lid_tensor[1] * u_lid_tensor[1]
+    
+    # Calculate equilibrium distributions manually for each direction
+    fe_top_0 = rho_top * w[0] * (1.0 + 3.0*cu_top_0 + 4.5*cu_top_0*cu_top_0 - 1.5*usq_top)
+    fe_top_1 = rho_top * w[1] * (1.0 + 3.0*cu_top_1 + 4.5*cu_top_1*cu_top_1 - 1.5*usq_top)
+    fe_top_2 = rho_top * w[2] * (1.0 + 3.0*cu_top_2 + 4.5*cu_top_2*cu_top_2 - 1.5*usq_top)
+    fe_top_3 = rho_top * w[3] * (1.0 + 3.0*cu_top_3 + 4.5*cu_top_3*cu_top_3 - 1.5*usq_top)
+    fe_top_4 = rho_top * w[4] * (1.0 + 3.0*cu_top_4 + 4.5*cu_top_4*cu_top_4 - 1.5*usq_top)
+    fe_top_5 = rho_top * w[5] * (1.0 + 3.0*cu_top_5 + 4.5*cu_top_5*cu_top_5 - 1.5*usq_top)
+    fe_top_6 = rho_top * w[6] * (1.0 + 3.0*cu_top_6 + 4.5*cu_top_6*cu_top_6 - 1.5*usq_top)
+    fe_top_7 = rho_top * w[7] * (1.0 + 3.0*cu_top_7 + 4.5*cu_top_7*cu_top_7 - 1.5*usq_top)
+    fe_top_8 = rho_top * w[8] * (1.0 + 3.0*cu_top_8 + 4.5*cu_top_8*cu_top_8 - 1.5*usq_top)
+    
+    # Apply moving lid boundary conditions
+    f[-1, :, 2] = fe_top_2 + f[-1, :, 4] - fe_top_4
+    f[-1, :, 5] = fe_top_5 + f[-1, :, 7] - fe_top_7
+    f[-1, :, 6] = fe_top_6 + f[-1, :, 8] - fe_top_8
+    
+    return f
 
-    # Moving lid boundary (top wall)
-    rho_top = (f[-1, :, [0, 1, 3, 2, 5, 6]].sum(-1) + 2*f[-1, :, 4])
-    cu_top = u_lid_tensor[0] * cx + u_lid_tensor[1] * cy
-    usq_top = (u_lid_tensor**2).sum()
-    fe_top = rho_top[..., None] * w * (1 + 3*cu_top + 4.5*cu_top**2 - 1.5*usq_top)
-    f[-1, :, 2] = fe_top[:, 2] + f[-1, :, 4] - fe_top[:, 4]
-    f[-1, :, 5] = fe_top[:, 5] + f[-1, :, 7] - fe_top[:, 7]
-    f[-1, :, 6] = fe_top[:, 6] + f[-1, :, 8] - fe_top[:, 8]
-
-    # Macroscopic fields - compute in-place
-    torch.sum(f, dim=-1, out=rho)
-    torch.sum(f * cx, dim=-1, out=u[..., 0])
-    torch.sum(f * cy, dim=-1, out=u[..., 1])
-    u[..., 0] /= rho
-    u[..., 1] /= rho
-
-    # Enforce no-slip conditions
-    u[:, 0, :]  = 0.0  # left
-    u[:, -1, :] = 0.0  # right
-    u[0, :, :]  = 0.0  # bottom
+def lbm_step_strategic(f, f_temp, rho, u, u_lid_tensor, cx, cy, w, inv_tau):
+    """Strategic compilation with explicit tensor updates."""
+    # Step 1: Collision (compiled) - returns new f
+    f = collision_streaming_step(f, rho, u, cx, cy, w, inv_tau)
+     
+    f= apply_boundary_conditions(f, u_lid_tensor, cx, cy, w)
+    
+    # Step 4: Macroscopic fields (compiled) - returns new rho, u
+    rho, u = compute_macroscopic(f, cx, cy)
+    
+    return f, rho, u
 
 # ────────────────────── Field initialisation ─────────────────────────
+print("🎯 Strategic Compilation LBM Initialization...")
 rho = torch.full((Ny, Nx), rho0, device=DEVICE)
 u   = torch.zeros((Ny, Nx, 2), device=DEVICE)
-f   = feq(rho, u).clone()
+
+# Initial equilibrium distribution
+cu = u[..., 0, None] * cx + u[..., 1, None] * cy
+usq = (u**2).sum(-1, keepdim=True)
+f = rho[..., None] * w * (1 + 3*cu + 4.5*cu**2 - 1.5*usq)
 
 # Pre-allocate memory-efficient buffers
-f_temp = torch.empty_like(f)  # for double-buffered streaming (avoids allocation)
-feq_temp = torch.empty_like(f)  # for equilibrium calculations (reused buffer)
-u_lid_tensor = torch.tensor([u_lid, 0.0], device=DEVICE)  # pre-allocated lid velocity
+f_temp = torch.empty_like(f)
+u_lid_tensor = torch.tensor([u_lid, 0.0], device=DEVICE)
 
 # Only allocate visualization buffers if plotting is enabled
 if enable_plotting:
     speed_vis_cpu = torch.empty((Ny, Nx), dtype=torch.float32)  # CPU buffer for visualization
 
+# Precompute inverse tau for faster collision
+inv_tau = 1.0 / tau
 
-# Initialize performance monitoring
-perf_start_time = time.time()
-perf_start_iter = 0
-total_lattice_updates = 0
-
+print("🚀 Starting Strategic Simulation...")
 
 # ───────────────────── Live visual initialisation ────────────────────
 if enable_plotting:
@@ -138,29 +192,19 @@ if enable_plotting:
     fig_live.canvas.draw()
     fig_live.canvas.flush_events()
 
+# Warm up compiled functions
+print("⏳ Warming up compiled functions...")
+for _ in range(10):
+    f, rho, u = lbm_step_strategic(f, f_temp, rho, u, u_lid_tensor, cx, cy, w, inv_tau)
 
+print("🏁 Running main simulation...")
 
 start_time = time.time()
-# ───────────────────────────── Main loop ─────────────────────────────
-it = 1
-while it < max_iter + 1:
-    # Complete LBM timestep with torch.compile optimization
-    lbm_step(f, f_temp, feq_temp, rho, u, u_lid_tensor, cx, cy, tau)
 
-    if it % perf_every == 0:
-        # Calculate performance metrics every `perf_every` iterations
-        perf_end_time = time.time()
-        elapsed_time = perf_end_time - start_time
-        total_lattice_updates = it * Nx * Ny
-        million_lups = total_lattice_updates / (elapsed_time * 1e6)
-        
-        print(f"Iteration {it:>5}, Time: {elapsed_time:.2f}s, "
-              f"MLUPS: {million_lups:.2f}, "
-              f"Total updates: {total_lattice_updates:,}")
-        
-
+for iteration in range(max_iter):
+    f, rho, u = lbm_step_strategic(f, f_temp, rho, u, u_lid_tensor, cx, cy, w, inv_tau)
     # Live visual every `viz_every` steps
-    if enable_plotting and it % viz_every == 0:
+    if enable_plotting and iteration % viz_every == 0:
         speed_magnitude = u.norm(dim=-1)
         speed_vis_cpu.copy_(speed_magnitude)
         speed_vis_cpu = speed_vis_cpu.detach().cpu()
@@ -168,23 +212,20 @@ while it < max_iter + 1:
         img.set_clim(vmin=0, vmax=speed_vis_cpu.max().item())
         fig_live.canvas.draw()
         fig_live.canvas.flush_events()
-    it += 1
 
-# Calculate final performance metrics
-final_time = time.time()
-total_runtime = final_time - start_time
-final_million_lups = (max_iter*Nx*Ny) / (total_runtime*1e6)  # Million Lattice Updates Per Second
-print(f"\n📊 Performance Summary:")
-print(f"Total iterations: {it}")
-print(f"Total lattice updates: {max_iter * Nx*Ny:,}")
-print(f"Average MLUPS: {final_million_lups:.3f}")
-print(f"Peak memory usage: {get_memory_usage()}")
-
-print(f"Final memory usage: {get_memory_usage()}")
-#PRINT END TIME
 end_time = time.time()
-print(f"End time: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}")
-print(f"Total runtime: {end_time - start_time:.2f} seconds")
+
+# ────────────────────── Performance Analysis ─────────────────────────
+total_runtime = end_time - start_time
+final_million_lups = (max_iter * Nx * Ny) / (total_runtime * 1e6)
+
+
+print(f"\n🎯 STRATEGIC Performance Summary:")
+print(f"⚡ Total iterations: {max_iter}")
+print(f"🔥 Total lattice updates: {max_iter * Nx * Ny:,}")
+print(f"🚀 Average MLUPS: {final_million_lups:.3f}")
+print(f"⏱️  Total runtime: {total_runtime:.3f} seconds")
+
 
 # ───────────────── Refresh live figure one last time ─────────────────
 if enable_plotting:
