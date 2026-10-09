@@ -236,6 +236,9 @@ def measure(backend: str, variant: str, dim: int, n: int, plan: Plan, copy_bw: f
     return rec
 
 
+BUDGET_S = {"quick": 110.0, "dev": 900.0, "full": 840.0}
+
+
 def run(plan_name: str = "quick", out: str | Path | None = None, only: list[str] | None = None,
         log: Any = print) -> dict:
     """Run a benchmark plan and write the results JSON."""
@@ -277,6 +280,9 @@ def run(plan_name: str = "quick", out: str | Path | None = None, only: list[str]
             if not keep(*entry):
                 continue
             for n in sizes_for(entry, dim):
+                if time.perf_counter() - t_start > BUDGET_S[plan_name]:
+                    log(f"  budget exhausted, skipping {entry} {n}")
+                    continue
                 try:
                     rec = measure(*entry, dim, n, plan, copy_bw, log=log)
                 except Exception as e:  # never let one backend kill the run
