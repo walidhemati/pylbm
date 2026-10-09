@@ -1,0 +1,522 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\hypersetup{colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black}
+\graphicspath{{../figures/}}
+\newcommand{\fig}[1]{\IfFileExists{../figures/#1.pdf}{\includegraphics[width=\linewidth]{#1.pdf}}%
+  {\fbox{\parbox{0.9\linewidth}{\centering figure #1 not generated yet}}}}
+
+\input{results.tex}
+% fallbacks for macros that a partial results JSON may not define
+\providecommand{\origMLUPS}{--}\providecommand{\origPct}{--}
+\providecommand{\speedupFpThirtyTwo}{--}\providecommand{\speedupBest}{--}
+\providecommand{\bestThreeDMLUPS}{--}\providecommand{\bestThreeDName}{--}
+\providecommand{\bestThreeDPct}{--}\providecommand{\bestThreeDSixteenMLUPS}{--}
+\providecommand{\bestThreeDSixteenPct}{--}
+\providecommand{\tritonTRTPct}{--}\providecommand{\tritonMRTPct}{--}
+\providecommand{\tritonTRTMLUPS}{--}\providecommand{\tritonMRTMLUPS}{--}
+\providecommand{\compileRollMLUPS}{--}\providecommand{\compileRollPct}{--}
+\providecommand{\eagerRollMLUPS}{--}\providecommand{\numpyRefMLUPS}{--}
+\providecommand{\tritonFusedPct}{--}\providecommand{\warpFusedPct}{--}
+\providecommand{\numbaFusedPct}{--}\providecommand{\cudaFusedPct}{--}
+\providecommand{\tritonFusedMLUPS}{--}\providecommand{\warpFusedMLUPS}{--}
+\providecommand{\numbaFusedMLUPS}{--}\providecommand{\cudaFusedMLUPS}{--}
+\providecommand{\ghiaOneLtwo}{--}\providecommand{\ghiaOneLinf}{--}
+\providecommand{\ghiaFourLtwo}{--}\providecommand{\ghiaFourLinf}{--}
+\providecommand{\ghiaThouLtwo}{--}\providecommand{\ghiaThouLinf}{--}
+\providecommand{\ghiaThouMRTLtwo}{--}\providecommand{\ghiaThouMRTLinf}{--}
+\providecommand{\ghiaThouTRTLtwo}{--}\providecommand{\ghiaThouTRTLinf}{--}
+\providecommand{\ghiaOneHalLtwo}{--}\providecommand{\ghiaOneHalLinf}{--}
+\providecommand{\ghiaOneBfLtwo}{--}\providecommand{\ghiaOneBfLinf}{--}
+\providecommand{\ghiaThouHalLtwo}{--}\providecommand{\ghiaThouHalLinf}{--}
+\providecommand{\ghiaThouBfLtwo}{--}\providecommand{\ghiaThouBfLinf}{--}
+\providecommand{\ghiaThouAALtwo}{--}\providecommand{\ghiaThouAALinf}{--}
+\providecommand{\ghiaThouCudaAAHalLtwo}{--}\providecommand{\ghiaThouCudaAAHalLinf}{--}
+\providecommand{\ghiaOneOrigLtwo}{--}\providecommand{\ghiaOneOrigLinf}{--}
+\providecommand{\ghiaOneSixtyfourLtwo}{--}\providecommand{\ghiaOneSixtyfourLinf}{--}
+\providecommand{\ghiaOneTwofiftysixLtwo}{--}\providecommand{\ghiaOneTwofiftysixLinf}{--}
+\providecommand{\shearMaxErr}{--}\providecommand{\shearMidErr}{--}\providecommand{\shearN}{--}
+\providecommand{\shearTauMin}{--}\providecommand{\shearTauMax}{--}
+\providecommand{\poisOrder}{--}\providecommand{\poisBgkFinest}{--}
+\providecommand{\poisTrtMax}{--}\providecommand{\poisFpThirtyTwo}{--}
+\providecommand{\poisFpSixtyFourHThirtyTwo}{--}
+\providecommand{\karmanSt}{--}\providecommand{\karmanCd}{--}\providecommand{\karmanCl}{--}
+\providecommand{\karmanD}{--}\providecommand{\karmanTau}{--}
+\providecommand{\karmanNx}{--}\providecommand{\karmanNy}{--}
+\providecommand{\tgvMaxErr}{--}\providecommand{\tgvN}{--}
+\providecommand{\eqMaxFpThirtyTwo}{--}\providecommand{\eqMaxFpSixteen}{--}
+\providecommand{\eqMaxBf}{--}\providecommand{\eqCount}{--}
+\providecommand{\bestSixteenMLUPS}{--}\providecommand{\bestSixteenName}{--}
+\providecommand{\bestSixteenPct}{--}
+
+\title{Reaching the memory roofline with Python:\\
+a fused-kernel lattice-Boltzmann solver on a laptop GPU}
+\author{Walid Hemati\\ \small Independent researcher}
+\date{}
+
+\begin{document}
+\maketitle
+
+\ifprovisional
+\begin{center}
+\fcolorbox{red}{red!8}{\parbox{0.92\linewidth}{\centering\bfseries
+PROVISIONAL NUMBERS\\[2pt]
+\normalfont\small Performance figures in this draft come from a development benchmark run
+(\texttt{results/\benchSource}) on a GPU shared with other jobs. They will be replaced by the
+serial \texttt{bench/run.py --full} run on an idle GPU.}}
+\end{center}
+\fi
+
+\begin{abstract}
+Lattice-Boltzmann (LB) solvers are bandwidth-bound: one D2Q9 update in single precision
+moves at least \SI{72}{B} through DRAM, so the attainable speed is fixed by the memory
+system, not by the arithmetic. We ask whether a solver written and driven entirely from
+Python can sit on that roofline. Starting from an existing PyTorch cavity code, we build
+\texttt{pylbm}, a validated D2Q9/D3Q19 solver with BGK, TRT and MRT collisions, and climb an
+eight-rung optimization ladder from NumPy through eager and compiled PyTorch to fused
+stream--collide kernels in Triton, NVIDIA Warp, Numba-CUDA and hand-written CUDA C. On an
+RTX~3070 Laptop GPU the best fp32 D2Q9 kernel (\bestFpThirtyTwoName) runs at
+\bestFpThirtyTwoMLUPS{} MLUPS, \bestFpThirtyTwoPct\% of the measured device copy bandwidth
+of \SI{\copyBW}{GB/s}; storing shifted populations $f_i-w_i$ in 16 bits halves the traffic and
+reaches \bestSixteenMLUPS{} MLUPS. D3Q19 reaches \bestThreeDMLUPS{} MLUPS
+(\bestThreeDPct\% of copy bandwidth). The Triton, Warp and Numba kernels are generated from a
+single symbolic description, so all four toolchains execute identical arithmetic. The
+solver is checked against Ghia et al.\ (1982), shear-wave decay, Poiseuille flow, the
+Sch\"afer--Turek cylinder benchmark and 3D Taylor--Green decay; along the way we document
+three boundary-condition defects of the original code.
+\end{abstract}
+
+\section{Introduction}
+The lattice-Boltzmann method (LBM)~\citep{kruger2017,qian1992} is a standard tool for
+weakly compressible flows. Its update is local and regular, which makes it a natural fit for
+GPUs~\citep{tolke2008,obrecht2011,mawson2014}, and its arithmetic intensity is low: a D2Q9
+node reads nine populations and writes nine, about two floating-point operations per byte
+in fp32. On every current GPU this places LBM firmly under the memory roof of the roofline
+model~\citep{williams2009}. The relevant figure of merit is therefore the fraction of the
+attainable memory bandwidth a code sustains, not its FLOP rate.
+
+Python is the language in which many scientists prototype, but it is rarely the language of
+record for production LB codes, which tend to be C++/CUDA~\citep{bauer2021walberla} or use
+Python only to generate them~\citep{bauer2021lbmpy}. Python LB frameworks built on tensor
+libraries~\citep{bedrunka2021,ataei2024} trade some performance for flexibility. This paper
+starts from a small PyTorch lid-driven-cavity script (the earlier version of the present
+repository) that ran at a few hundred MLUPS and asks how far the same machine can be pushed
+without leaving Python as the driving language.
+
+Contributions:
+\begin{itemize}
+\item A restructured, tested solver (\texttt{pylbm}) with a consistent axis convention,
+half-way bounce-back with Ladd's moving-wall correction~\citep{ladd1994}, BGK, TRT and MRT
+collision, Guo forcing~\citep{guo2002}, a pure NumPy float64 reference implementation that
+acts as the correctness oracle, and a registry of interchangeable backends.
+\item An optimization ladder of eight rungs (NumPy, eager PyTorch with roll or gather
+streaming, \texttt{torch.compile}, and fused kernels in Triton, Warp, Numba-CUDA and CUDA C)
+plus memory-traffic variants: AA-pattern in-place streaming~\citep{bailey2009} and 16-bit
+storage of shifted populations~\citep{lehmann2022}. Every rung reproduces the reference to
+round-off.
+\item A kernel generator that prints the same fused update for Triton, Warp and Numba, so
+that differences between those backends are purely due to the compilers.
+\item A roofline analysis against the measured copy bandwidth showing that Python-driven
+kernels reach the same hardware efficiency as hand-written CUDA C.
+\item Validation against five reference problems, and an account of the defects of the
+original code (mirrored axis, specular side walls, wrong lid density).
+\end{itemize}
+
+\section{Background and related work}
+\paragraph{LBM on GPUs.}
+Single-GPU LB implementations have tracked the memory bandwidth of each GPU generation.
+T\"olke and Krafczyk~\citep{tolke2008} demonstrated 3D LBM on desktop GPUs with a D3Q13
+model. Obrecht et al.~\citep{obrecht2011} reported up to 512 MLUPS (LBGK) and 516 MLUPS
+(MRT) for D3Q19 in single precision on a GeForce GTX~295, reaching up to 86\% of the maximum
+global-memory throughput. Mawson and Revell~\citep{mawson2014} reached 1036 MLUPS for D3Q19
+BGK in single precision on a Tesla K20c. Lehmann et al.~\citep{lehmann2022} report
+5493 MLUPS for D3Q19 with FP32 storage on an RTX~3090 and 15\,455 MLUPS on an A100 with
+FP32 arithmetic and FP16 storage of shifted populations.\footnote{Numbers from Table~5 and
+the conclusions of the arXiv version (2112.08926v2) of~\citep{lehmann2022}.} Because these
+results come from different GPUs, we compare fractions of bandwidth, not MLUPS.
+
+\paragraph{Memory layouts and streaming patterns.}
+The two-buffer ``pull'' scheme reads $f_i(\mathbf{x}-\mathbf{c}_i)$ and writes $f_i(\mathbf{x})$,
+needing two copies of the populations. In-place schemes avoid the second copy: the AA
+pattern~\citep{bailey2009} alternates two kernels that read and write the same locations, and
+the esoteric twist~\citep{geier2017} achieves the same with a single kernel. Wittmann et
+al.~\citep{wittmann2013} compare propagation steps on CPUs and GPUs. Code-generation
+frameworks such as lbmpy~\citep{bauer2021lbmpy} (used inside waLBerla~\citep{bauer2021walberla})
+derive optimized kernels symbolically; our generator follows the same idea at a much smaller
+scale.
+
+\paragraph{Reduced precision.}
+Lehmann et al.~\citep{lehmann2022} show that FP32 arithmetic with 16-bit storage is accurate
+for many flows provided the populations are stored shifted, $f_i-w_i$ (the deviation from the
+rest equilibrium), which recovers the bits that would otherwise be spent on the constant
+$w_i$. We adopt this ``DDF shifting'' for our fp16/bf16 variants.
+
+\paragraph{Python toolchains.}
+PyTorch~\citep{paszke2019} with \texttt{torch.compile}~\citep{ansel2024} lowers tensor
+programs to Triton~\citep{tillet2019} kernels. Triton, NVIDIA Warp~\citep{warp2022},
+Numba~\citep{lam2015} and CuPy~\citep{okuta2017} let one write GPU kernels from Python;
+CuPy compiles CUDA C at run time through NVRTC. Lettuce~\citep{bedrunka2021} and
+XLB~\citep{ataei2024} are LB frameworks on PyTorch and JAX respectively.
+
+\section{Method}
+\subsection{Lattice Boltzmann equation}
+With populations $f_i(\mathbf{x},t)$ on a DdQq lattice (D2Q9 or D3Q19, weights $w_i$, lattice
+speed of sound $c_s^2=1/3$), one time step is
+\begin{equation}
+f_i(\mathbf{x}+\mathbf{c}_i, t+1) = f_i^\star(\mathbf{x},t)
+= f_i + \Omega_i(\mathbf{f}) + S_i ,
+\end{equation}
+with density $\rho=\sum_i f_i$ and velocity $\rho\mathbf{u}=\sum_i\mathbf{c}_i f_i+\mathbf{F}/2$.
+The equilibrium is the usual second-order polynomial
+$f_i^{\rm eq}=w_i\rho[1+3\,\mathbf{c}_i\!\cdot\!\mathbf{u}+\tfrac92(\mathbf{c}_i\!\cdot\!\mathbf{u})^2-\tfrac32u^2]$.
+We implement three collision operators:
+BGK~\citep{bhatnagar1954,qian1992}, $\Omega_i=-(f_i-f_i^{\rm eq})/\tau$, with kinematic
+viscosity $\nu=(\tau-\tfrac12)/3$;
+TRT~\citep{ginzburg2008}, which relaxes the symmetric and antisymmetric parts of
+$f_i-f_i^{\rm eq}$ with rates $s_+=1/\tau$ and $s_-$ chosen so that the ``magic'' parameter
+$\Lambda=(1/s_+-\tfrac12)(1/s_--\tfrac12)=3/16$;
+and MRT~\citep{lallemand2000,dhumieres2002} for D2Q9 in the orthogonal moment basis
+$(\rho,e,\varepsilon,j_x,q_x,j_y,q_y,p_{xx},p_{xy})$ of Lallemand and Luo, with shear rates
+$1/\tau$, energy-flux rates from the same magic relation, and $s_e=1.64$, $s_\varepsilon=1.54$.
+Body forces enter through the Guo source term~\citep{guo2002}
+$S_i=(1-\tfrac{s}{2})w_i[3(\mathbf{c}_i-\mathbf{u})\!\cdot\!\mathbf{F}+9(\mathbf{c}_i\!\cdot\!\mathbf{u})(\mathbf{c}_i\!\cdot\!\mathbf{F})]$,
+applied per relaxation rate for TRT and MRT.
+
+\subsection{Boundary conditions and conventions}
+Arrays are stored structure-of-arrays, $f[i,y,x]$ (or $f[i,z,y,x]$), with $x$ the fastest index,
+$y$ pointing up (row~0 is the bottom wall) and the lid on the top wall moving in $+x$. Walls
+are placed half-way between the last fluid node and the virtual solid node, so a cavity of
+$n$ nodes has side length $n$ and $\mathrm{Re}=U n/\nu$. A population leaving the fluid towards
+a wall returns in the opposite direction one step later,
+\begin{equation}
+f_{\bar\imath}(\mathbf{x},t+1)=f_i^\star(\mathbf{x},t)-6w_i\rho_w\,\mathbf{c}_i\!\cdot\!\mathbf{u}_w ,
+\end{equation}
+where the moving-wall term is Ladd's momentum correction~\citep{ladd1994} with $\rho_w=1$. At
+edges and corners the lid takes precedence. The cylinder benchmark additionally uses a
+velocity inlet (the same moving-wall rule with the parabolic profile as $\mathbf{u}_w$) and a
+pressure outlet that sets the incoming populations to $f_i^{\rm eq}(\rho=1,\mathbf{u})$ with
+the velocity of the neighbouring column.
+
+\subsection{Defects of the original code}
+Running the original script through the same interface exposed three defects, all fixed in
+the new core. (i)~Its streaming moves $c_y=+1$ populations towards decreasing row index while
+its plots use \texttt{origin="lower"}, so the lid that appears at the top is physically the
+$y=0$ wall; the flow is the mirror image of the intended one. (ii)~The side walls swap
+directions $5\leftrightarrow6$ and $8\leftrightarrow7$, which is a specular (free-slip)
+reflection, not bounce-back; no-slip was only enforced indirectly by zeroing $\mathbf{u}$
+before the next equilibrium. (iii)~The lid density was computed as
+$f_0+f_1+f_3+f_2+f_5+f_6+2f_4$ instead of $f_0+f_1+f_3+2(f_4+f_7+f_8)$. With the
+correct mirror mapping, the original code deviates from Ghia's Re\,=\,100 profiles by
+$L_\infty=\ghiaOneOrigLinf$ (in units of the lid speed) on a $128^2$ grid, against
+$\ghiaOneLinf$ for the corrected solver on the same grid (\cref{sec:validation}).
+
+\section{Implementation: the optimization ladder}
+\subsection{One interface, one oracle}
+A \texttt{Problem} describes the box (per-axis periodic or walled), $\tau$, collision
+operator, lid velocity and force; the general solvers additionally accept solid masks,
+an inlet profile and an outlet. Every backend implements \texttt{step(n)},
+\texttt{populations()} (the post-collision state in canonical layout, as float64) and
+\texttt{set\_populations()}. The NumPy reference evaluates the unfused algorithm in float64
+with \texttt{np.roll} streaming and slice-assigned wall rules. The same array-level code runs
+on torch tensors, which gives the first PyTorch rungs for free.
+
+\subsection{The rungs}
+\begin{description}
+\item[NumPy (float64).] The reference: one array operation per population and term.
+\item[torch eager, roll.] The reference code on CUDA tensors; about 150 kernel launches per
+step, so it is launch-bound at every size.
+\item[torch eager, gather.] Streaming and all boundary rules collapse into a single
+\texttt{torch.take} with a precomputed index table. The table is produced by running the
+reference streaming routine on an array holding each entry's own index, so this rung is
+boundary-for-boundary identical to the reference by construction, and it supports arbitrary
+geometry (we use it for the cylinder benchmark).
+\item[torch.compile (original, roll, gather).] The original script, and the roll and
+gather formulations, compiled by Inductor into Triton kernels.
+\item[Fused kernels.] One kernel per time step (two for the AA pattern) that pulls the
+populations of a node, applies bounce-back, collides and stores, in Triton, Warp,
+Numba-CUDA and CUDA C (NVRTC via CuPy). Indices are 32-bit; the wall tests and periodic
+wraps reduce to comparisons of the node coordinates with the box edges, so no flag field is
+read and the traffic stays at the minimum.
+\end{description}
+
+\subsection{A single kernel description for three Python DSLs}
+The Triton, Warp and Numba kernels are printed by a small generator
+(\texttt{pylbm/codegen.py}) from one description of the update. Each population becomes one
+select-then-load statement (the select chooses between the neighbour's slot and the own
+opposite slot for wall links, so exactly one load is issued), followed by straight-line
+moments, equilibria and collision with constants folded in, and one store per population.
+The printers differ only in syntax: Triton operates on a block of \texttt{BLOCK} nodes along
+$x$ with masked vector loads, Warp and Numba on one node per thread, and Numba needs explicit
+\texttt{float32} literals to avoid silent promotion to fp64. The CUDA C kernel is written by
+hand with \texttt{\#pragma unroll} loops over constant tables and specialised by preprocessor
+definitions; it does not share code with the generator, which makes it an independent check.
+
+\subsection{Memory-traffic variants}
+\paragraph{AA pattern.} The two-buffer scheme holds $2q$ values per node. In the AA
+pattern~\citep{bailey2009} an ``even'' kernel reads $f_i(\mathbf{x})$ and writes the
+post-collision value into slot $\bar\imath$ of the same node; an ``odd'' kernel reads slot
+$\bar\imath$ of node $\mathbf{x}-\mathbf{c}_i$ and writes slot $i$ of node
+$\mathbf{x}+\mathbf{c}_i$. Each node reads and writes exactly the locations it owns, so the
+update is race free in a single buffer. Wall links need care in the odd step on both sides:
+a link whose source is behind a wall reads the node's own slot $i$, and a link whose target
+is behind a wall writes back into the node's own slot $\bar\imath$ including the moving-wall
+term. Our AA kernels are bit-identical to the two-buffer kernels in fp32
+(test \texttt{test\_aa\_pattern\_bitwise\_equal\_to\_two\_buffer}). The traffic per update is
+unchanged, but the memory footprint halves.
+\paragraph{16-bit storage.} We store $h_i=f_i-w_i$ in fp16 or bf16 and compute in fp32,
+following~\citep{lehmann2022}: the conversion costs a few instructions and the traffic drops
+to \SI{36}{B} per D2Q9 node.
+
+\subsection{Traffic model and measurement}
+\label{sec:model}
+We use the minimal traffic model: every update reads and writes each population once,
+$2qs$ bytes for storage size $s$ (\SI{72}{B} D2Q9/fp32, \SI{36}{B} D2Q9/16-bit,
+\SI{152}{B} D3Q19/fp32, \SI{76}{B} D3Q19/16-bit). Boundary handling adds no traffic in the
+fused kernels. Effective bandwidth is MLUPS times this byte count, so it is never
+inflated. The ceiling is the bandwidth of a device-to-device copy measured at the start of
+each benchmark run with a \SI{1}{GiB} \texttt{torch} \texttt{copy\_} (read plus write
+counted): \SI{\copyBW}{GB/s} on the \gpuName{}, against a specification value of
+\SI{\specBW}{GB/s}. The resulting fp32 D2Q9 roofline is \ceilFpThirtyTwo{} MLUPS, the
+16-bit roofline \ceilSixteen{} MLUPS and the D3Q19 fp32 roofline \ceilThreeD{} MLUPS. The
+benchmark problem is the lid-driven cavity (all walls active). Timings follow a fixed
+protocol: warm-up including JIT compilation, device synchronisation around every timed
+region, five repeats of at least \SI{0.5}{s} each, and the median reported with min/max.
+
+\section{Validation}
+\label{sec:validation}
+\paragraph{Backend equivalence.} After 100--200 steps on small cavities, channels and
+periodic boxes (BGK, TRT, MRT, with and without force, 2D and 3D), every fp32 backend
+agrees with the float64 reference to \eqMaxFpThirtyTwo{} in the populations, the fp16
+variants to \eqMaxFpSixteen{} and the bf16 variant to \eqMaxBf{} (\eqCount{} backend
+variants; \texttt{tests/test\_equivalence.py}).
+
+\paragraph{Lid-driven cavity.}
+\Cref{fig:ghia} compares the centreline velocities with the tabulated values of Ghia et
+al.~\citep{ghia1982} at Re = 100, 400 and 1000 (lid speed $U=0.1$). Errors are computed at
+the 15 interior table points per profile (the Re\,=\,400 $v$ value at $x=0.9063$, a widely
+reported misprint, is excluded) and given in units of $U$ in \cref{tab:ghia}. They are at
+the level of the differences between Ghia's $129^2$ multigrid solution and modern
+high-resolution solutions, and do not decrease further with grid refinement at Re\,=\,100
+($\ghiaOneSixtyfourLinf$, $\ghiaOneLinf$, $\ghiaOneTwofiftysixLinf$ on $64^2$, $128^2$,
+$256^2$). TRT and MRT agree with BGK at Re\,=\,1000, and the AA-pattern kernel reproduces
+the two-buffer result exactly. With shifted fp16 storage the Re\,=\,100 error is unchanged
+($L_\infty=\ghiaOneHalLinf$) and the Re\,=\,1000 error grows from \ghiaThouLinf{} to
+\ghiaThouHalLinf{}, still about 1\% of the lid speed; the velocity field then stagnates at a
+round-off noise floor instead of converging to the fp32 tolerance. bf16, with an 8-bit
+significand, is clearly not accurate enough ($L_\infty=\ghiaThouBfLinf$ at Re\,=\,1000).
+
+\begin{table}[t]
+\centering
+\caption{Cavity centreline errors against Ghia et al.\ (1982) in units of the lid speed
+($L_2$: RMS over the interior table points of both profiles; $L_\infty$: maximum).}
+\label{tab:ghia}
+\begin{tabular}{llcc}
+\toprule
+case & solver & $L_2$ & $L_\infty$\\
+\midrule
+Re 100, $128^2$ & Triton fused, BGK & \ghiaOneLtwo & \ghiaOneLinf\\
+Re 400, $256^2$ & Triton fused, BGK & \ghiaFourLtwo & \ghiaFourLinf\\
+Re 1000, $256^2$ & Triton fused, BGK & \ghiaThouLtwo & \ghiaThouLinf\\
+Re 1000, $256^2$ & Triton fused, TRT & \ghiaThouTRTLtwo & \ghiaThouTRTLinf\\
+Re 1000, $256^2$ & Triton fused, MRT & \ghiaThouMRTLtwo & \ghiaThouMRTLinf\\
+Re 1000, $256^2$ & Triton fused AA, BGK & \ghiaThouAALtwo & \ghiaThouAALinf\\
+\midrule
+Re 100, $128^2$ & Triton, fp16 storage & \ghiaOneHalLtwo & \ghiaOneHalLinf\\
+Re 100, $128^2$ & Triton, bf16 storage & \ghiaOneBfLtwo & \ghiaOneBfLinf\\
+Re 1000, $256^2$ & Triton, fp16 storage & \ghiaThouHalLtwo & \ghiaThouHalLinf\\
+Re 1000, $256^2$ & CUDA C, AA + fp16 & \ghiaThouCudaAAHalLtwo & \ghiaThouCudaAAHalLinf\\
+Re 1000, $256^2$ & Triton, bf16 storage & \ghiaThouBfLtwo & \ghiaThouBfLinf\\
+\midrule
+Re 100, $128^2$ & original code & \ghiaOneOrigLtwo & \ghiaOneOrigLinf\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\fig{ghia}
+\caption{Lid-driven cavity centreline profiles (lines) against Ghia et al.\ (1982)
+(circles).}
+\label{fig:ghia}
+\end{figure}
+
+\paragraph{Shear-wave decay.} A sinusoidal shear wave $u_x=A\sin(2\pi y/n)$ in a periodic
+$\shearN^2$ box decays as $\exp(-\nu k^2t)$. Fitting the decay gives the measured viscosity
+(\cref{fig:visc}). For $\tau\in[\shearTauMin,\shearTauMax]$ the largest relative deviation
+from $(\tau-\tfrac12)/3$ is \shearMaxErr\%, and \shearMidErr\% for $0.6\le\tau\le1.6$; the
+remaining deviation is the known higher-order truncation error that grows towards both ends
+of the $\tau$ range.
+
+\begin{figure}[t]
+\centering
+\fig{viscosity}
+\caption{Shear-wave decay: measured against theoretical viscosity (left) and relative error
+(right).}
+\label{fig:visc}
+\end{figure}
+
+\paragraph{Poiseuille flow.} A body-force driven channel of width $H$ at fixed $\tau=0.8$
+and fixed peak velocity converges to the analytic parabola with order \poisOrder{} for BGK
+(relative $L_2$ error \poisBgkFinest{} at $H=64$), and TRT with $\Lambda=3/16$ reproduces the
+parabola to round-off (largest error \poisTrtMax), as expected for half-way bounce-back with
+the magic parameter (\cref{fig:pois}). The convergence study uses the float64 reference:
+in fp32 the tiny force increments ($\sim10^{-6}$ per step) are partly lost to round-off when
+added to populations of order 0.1, which limits the $H=32$ error to \poisFpThirtyTwo{}
+against \poisFpSixtyFourHThirtyTwo{} in float64.
+
+\begin{figure}[t]
+\centering
+\fig{poiseuille}
+\caption{Poiseuille channel: grid convergence (left) and profile (right).}
+\label{fig:pois}
+\end{figure}
+
+\paragraph{Cylinder in a channel.} For the Sch\"afer--Turek benchmark 2D-2~\citep{schafer1996}
+(channel $2.2\times0.41$, cylinder diameter $0.1$ at $(0.2,0.2)$, parabolic inflow with mean
+velocity $\bar U$, Re\,=\,$\bar UD/\nu=100$) we use $D=\karmanD$ nodes
+($\karmanNx\times\karmanNy$ lattice, $\bar U=0.05$, $\tau=\karmanTau$, TRT), a staircase
+cylinder and momentum-exchange forces. The flow settles into periodic vortex shedding
+(\cref{fig:karman}) with Strouhal number $\mathrm{St}=fD/\bar U=\karmanSt$, maximum drag
+coefficient $c_{D,\max}=\karmanCd$ and maximum lift coefficient $c_{L,\max}=\karmanCl$. The
+benchmark's reference intervals are $[0.2950,0.3050]$, $[3.22,3.24]$ and $[0.99,1.01]$; the
+drag is over-predicted, as expected for a staircase cylinder with simple bounce-back at this
+resolution.
+
+\begin{figure}[t]
+\centering
+\fig{karman}
+\caption{Sch\"afer--Turek 2D-2 at Re\,=\,100: vorticity (units of $\bar U/D$) and the lift and
+drag coefficients over the measurement window.}
+\label{fig:karman}
+\end{figure}
+
+\paragraph{3D.} A 2D Taylor--Green vortex embedded in each coordinate plane of a periodic
+$\tgvN^3$ D3Q19 box decays with the expected viscosity to within \tgvMaxErr\% (Triton and
+CUDA C), and the 3D lid-driven cavity of every 3D backend matches the reference.
+
+\section{Performance}
+\Cref{fig:ladder} and \cref{tab:ladder} show the ladder for the lid-driven cavity. The
+fused kernels are evaluated at the largest benchmark size; the slow rungs at the sizes where
+they finish in reasonable time.
+
+\begin{figure}[t]
+\centering
+\fig{ladder}
+\caption{The optimization ladder (median, whiskers min/max). Dashed: fp32 roofline at the
+measured copy bandwidth (\SI{\copyBW}{GB/s}); dotted: roofline for 16-bit storage.}
+\label{fig:ladder}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\small
+\caption{Lid-driven cavity throughput on the \gpuName{} (median of 5). B/LU: bytes per
+lattice update in the minimal traffic model; \% copy and \% spec: effective bandwidth as a
+fraction of the measured copy bandwidth and of the \SI{\specBW}{GB/s} specification.}
+\label{tab:ladder}
+\begin{tabular}{llrrrrrr}
+\toprule
+ & rung & size & MLUPS & B/LU & GB/s & \% copy & \% spec\\
+\midrule
+\ladderRows
+\\\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{From the original code to the roofline.}
+The original script runs at \origMLUPS{} MLUPS (\origPct\% of copy bandwidth): its
+\texttt{torch.compile}d functions are separated by Python-level boundary updates on an
+array-of-structures layout, so populations make several round trips through DRAM per step.
+Compiling the clean roll formulation lets Inductor fuse the step into a few kernels and
+gives
+\compileRollMLUPS{} MLUPS (\compileRollPct\%). The fused kernels then reach the
+roofline: \tritonFusedMLUPS{} MLUPS for Triton (\tritonFusedPct\%), \warpFusedMLUPS{} for
+Warp (\warpFusedPct\%), \numbaFusedMLUPS{} for Numba (\numbaFusedPct\%) and
+\cudaFusedMLUPS{} for CUDA C (\cudaFusedPct\%). The best fp32 variant is
+\speedupFpThirtyTwo$\times$ faster than the original code, and the best 16-bit variant
+\speedupBest$\times$. Values slightly above 100\% of the copy bandwidth are possible because
+a plain copy does not saturate DRAM perfectly either; the specification bandwidth is a hard
+upper bound that no variant exceeds.
+
+\paragraph{Collision operators are free.} At these intensities the arithmetic is hidden
+behind memory traffic: the Triton kernel reaches \tritonTRTPct\% (TRT) and \tritonMRTPct\%
+(MRT) of copy bandwidth, against \tritonFusedPct\% for BGK.
+
+\paragraph{Problem size.} \Cref{fig:scaling} shows throughput against lattice size. The
+fused kernels reach the plateau from about $10^6$ nodes; below that the per-launch overhead
+of the Python runtime (tens of microseconds per kernel launch through Triton's and Warp's
+launchers) dominates. D3Q19 reaches \bestThreeDMLUPS{} MLUPS (\bestThreeDPct\% of copy
+bandwidth) in fp32 and \bestThreeDSixteenMLUPS{} MLUPS (\bestThreeDSixteenPct\%) with
+16-bit storage.
+
+\begin{figure}[t]
+\centering
+\fig{scaling}
+\caption{Throughput against lattice size for D2Q9 (left) and D3Q19 (right). Solid:
+two-buffer fp32; dashed: AA pattern; dotted: 16-bit storage. Horizontal lines: rooflines.}
+\label{fig:scaling}
+\end{figure}
+
+\paragraph{Comparison with published codes.} Obrecht et al.~\citep{obrecht2011} report up to
+86\% of the maximum global-memory throughput for D3Q19 on a GTX~295, and Lehmann et
+al.'s~\citep{lehmann2022} RTX~3090 result corresponds to roughly 89\% of that card's
+\SI{936}{GB/s} specification bandwidth (5493 MLUPS $\times$ \SI{152}{B}). Our fused kernels
+operate at \bestFpThirtyTwoPct\% of measured copy bandwidth on a laptop GPU, i.e.\ in the same
+efficiency range as these hand-optimised CUDA/OpenCL codes, and the AA and 16-bit variants
+compose with it as expected.
+
+\section{Discussion}
+\paragraph{What Python costs.} At the kernel level nothing: once the update is a single fused
+kernel, the toolchain matters little and Triton, Warp, Numba and NVRTC-compiled CUDA C all
+land on the roofline. Python's cost is in launch overhead (visible at small sizes) and in the
+temptation to write the algorithm as many small array operations, which is what limits the
+eager and partially compiled rungs. \texttt{torch.compile} removes most of that cost
+automatically for the roll formulation, but not for the gather formulation, where the index
+table doubles the traffic.
+
+\paragraph{Threats to validity.}
+All measurements come from a single RTX~3070 Laptop GPU. Laptop GPUs adjust clocks with
+temperature and power; we record the SM clock and temperature with every run, but sustained
+runs may throttle. During development the GPU was shared with other jobs; publishable numbers
+come from a serial run on an otherwise idle GPU. The copy-bandwidth ceiling is itself a
+measurement (\SI{\copyBW}{GB/s}, \SI{1}{GiB} buffers) and a kernel with a better access
+pattern can exceed it slightly; we therefore also report the fraction of the specification
+bandwidth. CUDA C is compiled with NVRTC through CuPy, not \texttt{nvcc}; both use the same
+NVVM back end, but default flags differ. The minimal traffic model ignores the (cached)
+re-reads of neighbouring rows and the boundary branches, so it is a lower bound on actual
+DRAM traffic. The benchmark is a lid-driven cavity: problems with complex geometry need a
+flag field or index lists and move more data.
+
+\paragraph{Limitations and future work.}
+The fused kernels handle box geometries (walls, periodicity, moving lid, body force);
+the cylinder benchmark uses the gather backend. MRT is implemented for D2Q9 only. Only one
+GPU was available, so multi-GPU domain decomposition with halo exchange is left for future
+work; we make no scaling claims.
+
+\section{Conclusion}
+A lattice-Boltzmann solver written and driven from Python reaches the memory roofline of a
+laptop GPU: fused kernels written in Triton, Warp, Numba or CUDA C all sustain close to the
+measured copy bandwidth, and 16-bit storage of shifted populations nearly doubles the update
+rate at a moderate accuracy cost (fp16) on the cavity benchmark. The path from a few hundred to
+several thousand MLUPS was mostly about data movement, not about the language.
+
+\section*{Code availability}
+Code, benchmark data and the scripts that generate every number and figure in this paper are
+available at \url{https://github.com/walidhemati/pylbm} under the MIT license.
+\texttt{bench/run.py --full} reproduces the performance data, \texttt{pylbm validate} the
+validation data, and \texttt{figures/make\_figures.py} the figures and
+\texttt{paper/results.tex}.
+
+\bibliographystyle{unsrtnat}
+\bibliography{references}
+
+\end{document}

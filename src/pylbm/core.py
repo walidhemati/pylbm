@@ -123,10 +123,29 @@ def stream(f: Any, geo: Geometry, ops: Ops) -> list[Any]:
                     val = val + 6.0 * lat.wt[i] * lat.ct[i][0] * p.u_lid
                 out[i][fc] = val
     if p.outlet:
-        for i in range(lat.q):
-            if lat.ct[i][0] == -1:
-                out[i][..., -1] = out[i][..., -2]
+        apply_outlet(out, f, p)
     return out
+
+
+def apply_outlet(out: list[Any], f: Any, p: Problem) -> None:
+    """Pressure outlet on the right boundary (2D).
+
+    The populations entering the domain from the right (c_x = -1) are set to the equilibrium
+    with rho = 1 and the velocity of the neighbouring column (taken from the stored
+    post-collision state). Fixing the density keeps the mass in the channel bounded.
+    """
+    lat = p.lattice
+    col = [f[i][..., -2] for i in range(lat.q)]
+    rho = col[0]
+    for i in range(1, lat.q):
+        rho = rho + col[i]
+    ux = (col[1] - col[3] + col[5] - col[6] - col[7] + col[8]) / rho
+    uy = (col[2] - col[4] + col[5] + col[6] - col[7] - col[8]) / rho
+    usq = ux * ux + uy * uy
+    for i in range(lat.q):
+        if lat.ct[i][0] == -1:
+            cu = lat.ct[i][0] * ux + lat.ct[i][1] * uy
+            out[i][..., -1] = lat.wt[i] * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * usq)
 
 
 def moments(f: list[Any] | Any, p: Problem) -> tuple[Any, list[Any]]:

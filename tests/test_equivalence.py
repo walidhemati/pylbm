@@ -74,3 +74,18 @@ def test_registry_never_crashes():
     st = B.status()
     assert len(st) == len(B.entries())
     assert ("numpy", "roll", True, "") in st
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("entry", [("torch-eager", "roll"), ("torch-eager", "gather"),
+                                   ("torch-compile", "gather")], ids=lambda e: "/".join(e))
+def test_general_geometry_matches_reference(entry):
+    """Obstacle + velocity inlet + pressure outlet (the Karman setup) on a tiny channel."""
+    from pylbm.validation.karman import schafer_turek_problem
+
+    p = schafer_turek_problem(d=6, u_mean=0.05, collision="trt")
+    ref = B.make("numpy", "roll", p)
+    ref.step(60)
+    s = B.make(*entry, p)
+    s.step(60)
+    assert np.abs(s.populations() - ref.populations()).max() < 3e-6

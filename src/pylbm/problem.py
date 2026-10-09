@@ -20,7 +20,7 @@ class Problem:
     velocity ``u_lid`` in +x (Ladd momentum correction, wall density rho_w = 1).
 
     The general (NumPy / PyTorch) solvers additionally support solid obstacles, a velocity
-    inlet on the left wall and a zero-gradient outlet on the right; fused GPU kernels
+    inlet on the left wall and a pressure outlet on the right; fused GPU kernels
     support the plain box only (see :meth:`is_box`).
     """
 
@@ -36,7 +36,7 @@ class Problem:
     # --- general-solver extras -------------------------------------------------------
     solid: np.ndarray | None = None  # bool, array layout (ny, nx)
     inlet: np.ndarray | None = None  # u_x(y) on the left wall, shape (ny,)
-    outlet: bool = False  # zero-gradient outflow on the right boundary
+    outlet: bool = False  # pressure (rho = 1) outflow on the right boundary
     init_rho: np.ndarray | None = None  # array layout
     init_u: np.ndarray | None = None  # (d, *array layout)
     meta: dict = field(default_factory=dict)

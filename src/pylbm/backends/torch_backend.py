@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from ..core import Ops, collide, make_geometry, step, stream
+from ..core import Ops, apply_outlet, collide, make_geometry, step, stream
 from ..problem import Problem
 from .base import Solver
 
@@ -83,18 +83,20 @@ def _gather_tables(problem: Problem) -> tuple[np.ndarray, np.ndarray, np.ndarray
     The tables are produced by running the reference :func:`pylbm.core.stream` on an array
     that holds each entry's own flat index (with moving walls switched off), and on zeros
     (with moving walls on). The gather backend is therefore boundary-for-boundary identical
-    to the reference by construction.
+    to the reference by construction. The pressure outlet is not a gather; it is applied
+    afterwards with the same :func:`pylbm.core.apply_outlet`.
     """
     import dataclasses
 
     q = problem.lattice.q
     shp = (q,) + problem.array_shape
     ops = Ops(np)
-    still = dataclasses.replace(problem, u_lid=0.0, inlet=None)
+    still = dataclasses.replace(problem, u_lid=0.0, inlet=None, outlet=False)
     src = stream(np.arange(np.prod(shp), dtype=np.float64).reshape(shp),
                  make_geometry(still, np.asarray), ops)
     src = np.stack(src).reshape(-1).astype(np.int64)
-    corr = np.stack(stream(np.zeros(shp), make_geometry(problem, np.asarray), ops)).reshape(-1)
+    nob = dataclasses.replace(problem, outlet=False)
+    corr = np.stack(stream(np.zeros(shp), make_geometry(nob, np.asarray), ops)).reshape(-1)
     pos = np.nonzero(corr)[0].astype(np.int64)
     return src, pos, corr[pos]
 
@@ -118,7 +120,10 @@ class TorchEagerGather(_TorchBase):
         g = torch.take(f, self.src)
         if self.pos.numel():
             g.index_add_(0, self.pos, self.val)
-        return g.view(self.shape)
+        g = g.view(self.shape)
+        if self.problem.outlet:
+            apply_outlet([g[i] for i in range(self.shape[0])], f.view(self.shape), self.problem)
+        return g
 
     @torch.no_grad() if _HAVE_TORCH else (lambda f: f)
     def _advance(self, n: int) -> None:
