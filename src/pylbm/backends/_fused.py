@@ -23,6 +23,14 @@ except Exception:  # pragma: no cover
 _TORCH_DTYPES = {"f32": "float32", "f16": "float16", "bf16": "bfloat16"}
 
 
+def block_for(nx: int, default: int = 128) -> int:
+    """Threads along x per block: avoid partially idle blocks when nx is not a multiple."""
+    for b in (default, 64, 32):
+        if nx % b == 0:
+            return b
+    return default
+
+
 def cuda_ok() -> tuple[bool, str]:
     if torch is None:
         return False, "torch not installed"

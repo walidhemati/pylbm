@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 
 from ..lattice import MRT_M_D2Q9, MRT_NORM_D2Q9
-from ._fused import FusedSolver, cuda_ok
+from ._fused import FusedSolver, block_for, cuda_ok
 
 _HAVE = False
 _WHY = ""
@@ -87,18 +87,19 @@ class CupyFused(FusedSolver):
     def _compile(self) -> None:
         p = self.problem
         pats = ("aa-odd", "aa-even") if self.aa else ("ab",)
+        self.bx = block_for(p.shape[0], self.BLOCK_X)
         self.kernels = {}
         for pat in pats:
-            src = kernel_source(p, self.storage, pat, self.BLOCK_X)
+            src = kernel_source(p, self.storage, pat, self.bx)
             mod = cp.RawModule(code=src, options=("--std=c++14",))
             self.kernels[pat] = mod.get_function("lbm_kernel")
         shp = tuple(p.shape) + (1,) * (3 - p.dim)
-        self.grid = ((shp[0] + self.BLOCK_X - 1) // self.BLOCK_X, shp[1], shp[2])
+        self.grid = ((shp[0] + self.bx - 1) // self.bx, shp[1], shp[2])
         a = self.scalar_args()
         self.args = tuple(np.int32(v) for v in a[:4]) + tuple(np.float32(v) for v in a[4:])
 
     def _launch(self, which: str, src: Any, dst: Any) -> None:
-        self.kernels[which](self.grid, (self.BLOCK_X, 1, 1),
+        self.kernels[which](self.grid, (self.bx, 1, 1),
                             (np.uint64(src.data_ptr()), np.uint64(dst.data_ptr()), *self.args))
 
 

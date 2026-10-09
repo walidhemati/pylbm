@@ -7,12 +7,15 @@ from typing import Any
 import numpy as np
 
 from ..codegen import load, spec_for
-from ._fused import FusedSolver, cuda_ok
+from ._fused import FusedSolver, block_for, cuda_ok
 
 try:
     if not hasattr(np, "row_stack"):  # numba-cuda 0.x still references np.row_stack
         np.row_stack = np.vstack  # type: ignore[attr-defined]
+    from numba import config as _nbconfig
     from numba import cuda
+
+    _nbconfig.CUDA_LOW_OCCUPANCY_WARNINGS = 0
 
     _HAVE = True
 except Exception:  # pragma: no cover
@@ -47,12 +50,12 @@ class NumbaFused(FusedSolver):
         self.kernels = {pat: load(spec_for(p, self.storage, pat), "numba").lbm_kernel
                         for pat in pats}
         shp = tuple(p.shape) + (1,) * (3 - p.dim)
-        tx = self.THREADS[0]
+        tx = block_for(shp[0], self.THREADS[0])
         self.blocks = ((shp[0] + tx - 1) // tx, shp[1], shp[2])
         if p.dim == 2:
-            self.blocks, self.threads = self.blocks[:2], self.THREADS[:2]
+            self.blocks, self.threads = self.blocks[:2], (tx, 1)
         else:
-            self.threads = self.THREADS
+            self.threads = (tx, 1, 1)
         a = self.scalar_args()
         ints, floats = a[:4], a[4:]
         self.args = tuple(np.int64(v) for v in ints) + tuple(np.float32(v) for v in floats)

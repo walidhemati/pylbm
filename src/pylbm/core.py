@@ -21,6 +21,9 @@ import numpy as np
 from .lattice import MRT_M_D2Q9, MRT_NORM_D2Q9
 from .problem import Problem
 
+_M = MRT_M_D2Q9.tolist()
+_NRM = MRT_NORM_D2Q9.tolist()
+
 
 class Ops:
     """Tiny adapter so the same code runs on numpy arrays and torch tensors."""
@@ -59,7 +62,7 @@ def make_geometry(p: Problem, to_array: Any) -> Geometry:
         axes = tuple(range(p.dim))
         solid_src = []
         for i in range(lat.q):
-            shifts = tuple(int(lat.c[i, a]) for a in reversed(range(p.dim)))
+            shifts = tuple(lat.ct[i][a] for a in reversed(range(p.dim)))
             solid_src.append(to_array(np.roll(solid, shifts, axis=axes)))
     inlet_corr = None
     if p.inlet is not None:
@@ -68,8 +71,8 @@ def make_geometry(p: Problem, to_array: Any) -> Geometry:
         uin = np.asarray(p.inlet, dtype=np.float64)
         inlet_corr = []
         for i in range(lat.q):
-            if lat.c[i, 0] == 1:
-                inlet_corr.append(to_array(6.0 * lat.w[i] * lat.c[i, 0] * uin))
+            if lat.ct[i][0] == 1:
+                inlet_corr.append(to_array(6.0 * lat.w[i] * lat.ct[i][0] * uin))
             else:
                 inlet_corr.append(None)
     return Geometry(p, solid_src, inlet_corr)
@@ -90,7 +93,7 @@ def stream(f: Any, geo: Geometry, ops: Ops) -> list[Any]:
     axes = tuple(range(d))
     out = []
     for i in range(lat.q):
-        shifts = tuple(int(lat.c[i, a]) for a in reversed(range(d)))
+        shifts = tuple(lat.ct[i][a] for a in reversed(range(d)))
         if any(shifts):
             out.append(ops.roll(f[i], shifts, axes))
         else:
@@ -98,30 +101,30 @@ def stream(f: Any, geo: Geometry, ops: Ops) -> list[Any]:
     # solid obstacles (stationary)
     if geo.solid_src is not None:
         for i in range(lat.q):
-            if lat.c[i].any():
-                out[i] = ops.where(geo.solid_src[i], f[int(lat.opp[i])], out[i])
+            if any(lat.ct[i]):
+                out[i] = ops.where(geo.solid_src[i], f[lat.oppt[i]], out[i])
     # box walls; later axes override earlier ones at edges/corners (lid precedence)
     for a in range(d):
         if p.periodic[a]:
             continue
         top = a == d - 1
         for i in range(lat.q):
-            ca = lat.c[i, a]
+            ca = lat.ct[i][a]
             if ca == 1:  # source is behind the low wall
                 fc = _face(d, a, 0)
-                val = f[int(lat.opp[i])][fc]
+                val = f[lat.oppt[i]][fc]
                 if a == 0 and geo.inlet_corr is not None:
                     val = val + geo.inlet_corr[i]
                 out[i][fc] = val
             elif ca == -1:  # source is behind the high wall
                 fc = _face(d, a, -1)
-                val = f[int(lat.opp[i])][fc]
-                if top and p.u_lid != 0.0 and lat.c[i, 0] != 0:
-                    val = val + 6.0 * float(lat.w[i]) * int(lat.c[i, 0]) * p.u_lid
+                val = f[lat.oppt[i]][fc]
+                if top and p.u_lid != 0.0 and lat.ct[i][0] != 0:
+                    val = val + 6.0 * lat.wt[i] * lat.ct[i][0] * p.u_lid
                 out[i][fc] = val
     if p.outlet:
         for i in range(lat.q):
-            if lat.c[i, 0] == -1:
+            if lat.ct[i][0] == -1:
                 out[i][..., -1] = out[i][..., -2]
     return out
 
@@ -136,7 +139,7 @@ def moments(f: list[Any] | Any, p: Problem) -> tuple[Any, list[Any]]:
     for a in range(p.dim):
         j = None
         for i in range(lat.q):
-            ci = lat.c[i, a]
+            ci = lat.ct[i][a]
             if ci == 0:
                 continue
             term = f[i] if ci == 1 else -f[i]
@@ -157,10 +160,10 @@ def _equilibria(rho: Any, u: list[Any], p: Problem) -> tuple[list[Any], list[Any
     for i in range(lat.q):
         cu = 0.0
         for a in range(p.dim):
-            if lat.c[i, a] != 0:
-                cu = cu + int(lat.c[i, a]) * u[a]
+            if lat.ct[i][a] != 0:
+                cu = cu + lat.ct[i][a] * u[a]
         cus.append(cu)
-        feq.append(float(lat.w[i]) * rho * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * usq))
+        feq.append(lat.wt[i] * rho * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * usq))
     return feq, cus
 
 
@@ -173,8 +176,8 @@ def _guo_source(u: list[Any], cus: list[Any], p: Problem) -> list[Any]:
             uf = uf + u[a] * p.force[a]
     out = []
     for i in range(lat.q):
-        cf = float(sum(lat.c[i, a] * p.force[a] for a in range(p.dim)))
-        out.append(float(lat.w[i]) * (3.0 * (cf - uf) + 9.0 * cus[i] * cf))
+        cf = float(sum(lat.ct[i][a] * p.force[a] for a in range(p.dim)))
+        out.append(lat.wt[i] * (3.0 * (cf - uf) + 9.0 * cus[i] * cf))
     return out
 
 
@@ -195,7 +198,7 @@ def collide(f: list[Any], p: Problem, ops: Ops) -> Any:
     elif p.collision == "trt":
         sp, sm = p.trt_rates()
         for i in range(lat.q):
-            o = int(lat.opp[i])
+            o = lat.oppt[i]
             fp, fm = 0.5 * (f[i] + f[o]), 0.5 * (f[i] - f[o])
             ep, em = 0.5 * (feq[i] + feq[o]), 0.5 * (feq[i] - feq[o])
             v = f[i] - sp * (fp - ep) - sm * (fm - em)
@@ -204,8 +207,8 @@ def collide(f: list[Any], p: Problem, ops: Ops) -> Any:
                 v = v + (1.0 - 0.5 * sp) * gp + (1.0 - 0.5 * sm) * gm
             out.append(v)
     else:  # mrt, D2Q9: m-space update  dm_k = -s_k M(f - feq) + (1 - s_k/2) M S
-        s = [float(v) for v in p.mrt_rates()]
-        M, nrm = MRT_M_D2Q9.tolist(), MRT_NORM_D2Q9.tolist()
+        s = p.mrt_rate_tuple()
+        M, nrm = _M, _NRM
         dm = []
         for k in range(lat.q):
             acc = 0.0

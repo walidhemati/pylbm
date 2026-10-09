@@ -73,7 +73,8 @@ class Solver(ABC):
         self.steps_done += n
 
     def synchronize(self) -> None:
-        """Block until queued device work is done."""
+        """Block until queued device work is done (no-op on the CPU)."""
+        return None
 
     def macroscopic(self) -> tuple[np.ndarray, np.ndarray]:
         """(rho, u) as numpy arrays; ``u`` has shape (d, *array_shape)."""

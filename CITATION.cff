@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use pylbm, please cite it as below."
+title: "pylbm: a fused-kernel lattice-Boltzmann solver that reaches the GPU memory roofline from Python"
+type: software
+authors:
+  - family-names: Hemati
+    given-names: Walid
+version: 1.0.0
+date-released: 2026-10-09
+license: MIT
+repository-code: "https://github.com/walidhemati/pylbm"
+keywords:
+  - lattice Boltzmann
+  - GPU
+  - roofline
+  - Triton
+  - CUDA

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..codegen import load, spec_for
-from ._fused import FusedSolver, cuda_ok
+from ._fused import FusedSolver, block_for, cuda_ok
 
 try:
     import triton
@@ -36,11 +36,12 @@ class TritonFused(FusedSolver):
         self.kernels = {pat: load(spec_for(p, self.storage, pat), "triton").lbm_kernel
                         for pat in pats}
         shp = tuple(p.shape) + (1,) * (3 - p.dim)
-        self.grid = (triton.cdiv(shp[0], self.BLOCK), shp[1], shp[2])
+        self.block = block_for(shp[0], self.BLOCK)
+        self.grid = (triton.cdiv(shp[0], self.block), shp[1], shp[2])
         self.args = self.scalar_args()
 
     def _launch(self, which: str, src: Any, dst: Any) -> None:
-        self.kernels[which][self.grid](src, dst, *self.args, BLOCK=self.BLOCK,
+        self.kernels[which][self.grid](src, dst, *self.args, BLOCK=self.block,
                                        num_warps=self.NUM_WARPS)
 
 

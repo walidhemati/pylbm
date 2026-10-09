@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pylbm"
+version = "1.0.0"
+description = "A lattice-Boltzmann solver that reaches the GPU memory roofline from Python"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Walid Hemati" }]
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.optional-dependencies]
+torch = ["torch>=2.3"]
+triton = ["torch>=2.3", "triton>=3.0"]
+warp = ["torch>=2.3", "warp-lang>=1.5"]
+numba = ["torch>=2.3", "numba>=0.60", "numba-cuda"]
+cupy = ["torch>=2.3", "cupy-cuda12x>=13"]
+gpu = ["torch>=2.3", "triton>=3.0", "warp-lang>=1.5", "numba>=0.60", "numba-cuda",
+       "cupy-cuda12x>=13"]
+viz = ["matplotlib>=3.7", "imageio>=2.30"]
+dev = ["pytest>=7", "ruff>=0.5", "matplotlib>=3.7", "scipy>=1.10"]
+
+[project.scripts]
+pylbm = "pylbm.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/walidhemati/pylbm"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pylbm"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["legacy"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E741"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "gpu: requires a CUDA GPU (auto-skipped otherwise)",
+  "slow: longer validation runs",
+]

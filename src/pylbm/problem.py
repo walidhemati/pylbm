@@ -99,6 +99,12 @@ class Problem:
     def mrt_rates(self) -> np.ndarray:
         return mrt_rates(self.tau, self.s_e, self.s_eps)
 
+    def mrt_rate_tuple(self) -> tuple[float, ...]:
+        """MRT rates as plain floats (safe inside torch.compile-traced code)."""
+        s_nu = 1.0 / self.tau
+        s_q = magic_rate(s_nu, 3.0 / 16.0)
+        return (0.0, self.s_e, self.s_eps, 0.0, s_q, 0.0, s_q, s_nu, s_nu)
+
     def initial_populations(self) -> np.ndarray:
         """Equilibrium populations for the initial fields (float64, SoA layout)."""
         from .lattice import equilibrium

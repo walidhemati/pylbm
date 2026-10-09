@@ -28,6 +28,10 @@ class Lattice:
     c: np.ndarray  # (q, d) integer velocities
     w: np.ndarray  # (q,) weights
     opp: np.ndarray  # (q,) index of the opposite velocity
+    # plain-Python copies (tuples) for code traced by torch.compile
+    ct: tuple = ()
+    wt: tuple = ()
+    oppt: tuple = ()
 
     @property
     def q(self) -> int:
@@ -37,7 +41,9 @@ class Lattice:
 def _make(name: str, c: list[list[int]], w: list[float]) -> Lattice:
     ca = np.array(c, dtype=np.int64)
     opp = np.array([int(np.where((ca == -ci).all(axis=1))[0][0]) for ci in ca])
-    return Lattice(name, ca.shape[1], ca, np.array(w, dtype=np.float64), opp)
+    wa = np.array(w, dtype=np.float64)
+    return Lattice(name, ca.shape[1], ca, wa, opp, tuple(tuple(int(v) for v in r) for r in ca),
+                   tuple(float(v) for v in wa), tuple(int(v) for v in opp))
 
 
 #: D2Q9, ordered 0 rest, 1 E, 2 N, 3 W, 4 S, 5 NE, 6 NW, 7 SW, 8 SE (Krueger et al. 2017).
