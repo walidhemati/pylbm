@@ -18,6 +18,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.ticker  # noqa: E402
 import numpy as np  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -147,14 +148,21 @@ def fig_scaling(bench: dict, copy_bw: float) -> None:
                 continue
             rs.sort(key=lambda r: np.prod(r["size"]))
             n = [np.prod(r["size"]) for r in rs]
-            ls = ":" if "fp16" in key[1] or "bf16" in key[1] else (
-                "--" if "aa" in key[1] else "-")
-            ax.plot(n, [r["median"] for r in rs], ls, marker="o", ms=2.5, lw=1,
+            v = key[1]
+            ls = "-." if "bf16" in v else ":" if "fp16" in v else "--" if "aa" in v else "-"
+            mk = {"gather": "s", "original": "^", "roll": "o"}.get(v, "o")
+            if "fp16" in v or "bf16" in v:
+                mk = "v" if "aa" in v else "d"
+            elif "aa" in v:
+                mk = "x"
+            ax.plot(n, [r["median"] for r in rs], ls, marker=mk, ms=3, lw=1,
                     color=COLORS[key[0]], label=LABEL.get(key, f"{key[0]}/{key[1]}"))
         for bpu, ls in ((8 * q, "--"), (4 * q, ":")):
             ax.axhline(copy_bw * 1e9 / bpu / 1e6, color="k", ls=ls, lw=0.8)
         ax.set_xscale("log")
         ax.set_yscale("log")
+        ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+        ax.yaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
         ax.set_xlabel("lattice nodes")
         ax.set_ylabel("MLUPS")
         ax.set_title(f"{lattice}", fontsize=8)
@@ -461,9 +469,9 @@ def write_readme(bench: dict, src: str, ladder: dict, val: dict) -> None:
             lines.append(f"> D3Q19 fp32: **{b3['median']:,.0f} MLUPS** "
                          f"({b3['pct_copy_bw']:.0f}% of copy bandwidth).")
         if orig:
-            lines.append(f"> The original script of this repository: {orig['median']:,.0f} "
-                         f"MLUPS ({f32['median'] / orig['median']:.1f}x slower than fp32 "
-                         f"fused).")
+            lines.append(f"> The original script of this repository runs at "
+                         f"{orig['median']:,.0f} MLUPS; the best fp32 fused kernel is "
+                         f"{f32['median'] / orig['median']:.1f}x faster.")
         lines.append(f"> Source: `results/{src}`.")
         head = lines
     text = _replace_block(text, "headline", "\n>\n".join(head))

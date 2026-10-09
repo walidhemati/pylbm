@@ -12,8 +12,15 @@
 \usepackage{cleveref}
 \hypersetup{colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black}
 \graphicspath{{../figures/}}
-\newcommand{\fig}[1]{\IfFileExists{../figures/#1.pdf}{\includegraphics[width=\linewidth]{#1.pdf}}%
+\newcommand{\fig}[1]{\IfFileExists{../figures/#1.pdf}{\includegraphics[width=0.88\linewidth]{#1.pdf}}%
   {\fbox{\parbox{0.9\linewidth}{\centering figure #1 not generated yet}}}}
+
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\bottomfraction}{0.8}
+\renewcommand{\textfraction}{0.07}
+\renewcommand{\floatpagefraction}{0.85}
+\setcounter{topnumber}{3}
+\setcounter{totalnumber}{4}
 
 \input{results.tex}
 % fallbacks for macros that a partial results JSON may not define
@@ -314,7 +321,7 @@ the two-buffer result exactly. With shifted fp16 storage the Re\,=\,100 error is
 round-off noise floor instead of converging to the fp32 tolerance. bf16, with an 8-bit
 significand, is clearly not accurate enough ($L_\infty=\ghiaThouBfLinf$ at Re\,=\,1000).
 
-\begin{table}[t]
+\begin{table}[htbp]
 \centering
 \caption{Cavity centreline errors against Ghia et al.\ (1982) in units of the lid speed
 ($L_2$: RMS over the interior table points of both profiles; $L_\infty$: maximum).}
@@ -341,11 +348,12 @@ Re 100, $128^2$ & original code & \ghiaOneOrigLtwo & \ghiaOneOrigLinf\\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \fig{ghia}
-\caption{Lid-driven cavity centreline profiles (lines) against Ghia et al.\ (1982)
-(circles).}
+\caption{Lid-driven cavity centreline profiles (lines, finest grid per Re) against Ghia et
+al.\ (1982) (circles). The outlying Re\,=\,400 point at $x=0.9063$ is the misprint excluded
+from the error norms.}
 \label{fig:ghia}
 \end{figure}
 
@@ -356,7 +364,7 @@ from $(\tau-\tfrac12)/3$ is \shearMaxErr\%, and \shearMidErr\% for $0.6\le\tau\l
 remaining deviation is the known higher-order truncation error that grows towards both ends
 of the $\tau$ range.
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \fig{viscosity}
 \caption{Shear-wave decay: measured against theoretical viscosity (left) and relative error
@@ -373,7 +381,7 @@ in fp32 the tiny force increments ($\sim10^{-6}$ per step) are partly lost to ro
 added to populations of order 0.1, which limits the $H=32$ error to \poisFpThirtyTwo{}
 against \poisFpSixtyFourHThirtyTwo{} in float64.
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \fig{poiseuille}
 \caption{Poiseuille channel: grid convergence (left) and profile (right).}
@@ -391,7 +399,7 @@ benchmark's reference intervals are $[0.2950,0.3050]$, $[3.22,3.24]$ and $[0.99,
 drag is over-predicted, as expected for a staircase cylinder with simple bounce-back at this
 resolution.
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \fig{karman}
 \caption{Sch\"afer--Turek 2D-2 at Re\,=\,100: vorticity (units of $\bar U/D$) and the lift and
@@ -408,7 +416,7 @@ CUDA C), and the 3D lid-driven cavity of every 3D backend matches the reference.
 fused kernels are evaluated at the largest benchmark size; the slow rungs at the sizes where
 they finish in reasonable time.
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \fig{ladder}
 \caption{The optimization ladder (median, whiskers min/max). Dashed: fp32 roofline at the
@@ -416,7 +424,7 @@ measured copy bandwidth (\SI{\copyBW}{GB/s}); dotted: roofline for 16-bit storag
 \label{fig:ladder}
 \end{figure}
 
-\begin{table}[t]
+\begin{table}[htbp]
 \centering
 \small
 \caption{Lid-driven cavity throughput on the \gpuName{} (median of 5). B/LU: bytes per
@@ -458,7 +466,7 @@ launchers) dominates. D3Q19 reaches \bestThreeDMLUPS{} MLUPS (\bestThreeDPct\% o
 bandwidth) in fp32 and \bestThreeDSixteenMLUPS{} MLUPS (\bestThreeDSixteenPct\%) with
 16-bit storage.
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \fig{scaling}
 \caption{Throughput against lattice size for D2Q9 (left) and D3Q19 (right). Solid:
@@ -516,7 +524,10 @@ available at \url{https://github.com/walidhemati/pylbm} under the MIT license.
 validation data, and \texttt{figures/make\_figures.py} the figures and
 \texttt{paper/results.tex}.
 
+{\small
+\setlength{\bibsep}{1.5pt}
 \bibliographystyle{unsrtnat}
 \bibliography{references}
+}
 
 \end{document}

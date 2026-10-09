@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 
-def main(d: int = 30, frames: int = 72, every: int | None = None) -> None:
+def main(d: int = 30, frames: int = 60, every: int | None = None, scale: float = 1.4) -> None:
     import matplotlib
     from PIL import Image
 
@@ -29,7 +29,7 @@ def main(d: int = 30, frames: int = 72, every: int | None = None) -> None:
     s = B.make("torch-compile", "gather", p)
     t_conv = int(d / u_mean)
     s.step(40 * t_conv)  # develop the street
-    every = every or max(2, int(2 * 3.4 * t_conv / frames))  # ~2 shedding periods
+    every = every or max(2, int(3.3 * t_conv / frames))  # one shedding period (loops)
     cmap = matplotlib.colormaps["RdBu_r"]
     imgs = []
     for _ in range(frames):
@@ -39,8 +39,8 @@ def main(d: int = 30, frames: int = 72, every: int | None = None) -> None:
         rgb = cmap(np.clip((w + 3.0) / 6.0, 0, 1))[..., :3]
         rgb[p.solid] = (0.15, 0.15, 0.15)
         img = Image.fromarray((255 * rgb[::-1]).astype(np.uint8))
-        img = img.resize((img.width * 2, img.height * 2), Image.BICUBIC)
-        imgs.append(img.convert("P", palette=Image.ADAPTIVE, colors=64))
+        img = img.resize((int(img.width * scale), int(img.height * scale)), Image.BICUBIC)
+        imgs.append(img.convert("P", palette=Image.ADAPTIVE, colors=32))
     out = ROOT / "docs" / "media" / "hero.gif"
     out.parent.mkdir(parents=True, exist_ok=True)
     imgs[0].save(out, save_all=True, append_images=imgs[1:], duration=50, loop=0,
