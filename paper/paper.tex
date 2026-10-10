@@ -32,6 +32,7 @@
 \providecommand{\tritonTRTPct}{--}\providecommand{\tritonMRTPct}{--}
 \providecommand{\tritonTRTMLUPS}{--}\providecommand{\tritonMRTMLUPS}{--}
 \providecommand{\compileRollMLUPS}{--}\providecommand{\compileRollPct}{--}
+\providecommand{\compileRollThreeDPct}{--}
 \providecommand{\eagerRollMLUPS}{--}\providecommand{\numpyRefMLUPS}{--}
 \providecommand{\tritonFusedPct}{--}\providecommand{\warpFusedPct}{--}
 \providecommand{\numbaFusedPct}{--}\providecommand{\cudaFusedPct}{--}
@@ -444,12 +445,15 @@ fraction of the measured copy bandwidth and of the \SI{\specBW}{GB/s} specificat
 The original script runs at \origMLUPS{} MLUPS (\origPct\% of copy bandwidth): its
 \texttt{torch.compile}d functions are separated by Python-level boundary updates on an
 array-of-structures layout, so populations make several round trips through DRAM per step.
-Compiling the clean roll formulation lets Inductor fuse the step into a few kernels and
-gives
-\compileRollMLUPS{} MLUPS (\compileRollPct\%). The fused kernels then reach the
-roofline: \tritonFusedMLUPS{} MLUPS for Triton (\tritonFusedPct\%), \warpFusedMLUPS{} for
+Compiling the clean roll formulation lets Inductor fuse the step and gives
+\compileRollMLUPS{} MLUPS (\compileRollPct\%): for fp32 D2Q9, \texttt{torch.compile} alone
+already reaches the roofline. The hand-written fused kernels match it rather than beat it,
+\tritonFusedMLUPS{} MLUPS for Triton (\tritonFusedPct\%), \warpFusedMLUPS{} for
 Warp (\warpFusedPct\%), \numbaFusedMLUPS{} for Numba (\numbaFusedPct\%) and
-\cudaFusedMLUPS{} for CUDA C (\cudaFusedPct\%). The best fp32 variant is
+\cudaFusedMLUPS{} for CUDA C (\cudaFusedPct\%). They are needed where Inductor stops: in
+D3Q19 the compiled roll formulation reaches \compileRollThreeDPct\% of copy bandwidth
+(\cref{tab:ladder}), and 16-bit storage and the AA pattern change the data layout, which only
+the fused kernels implement. The best fp32 variant is
 \speedupFpThirtyTwo$\times$ faster than the original code, and the best 16-bit variant
 \speedupBest$\times$. Values slightly above 100\% of the copy bandwidth are possible because
 a plain copy does not saturate DRAM perfectly either; the specification bandwidth is a hard
@@ -487,9 +491,9 @@ compose with it as expected.
 kernel, the toolchain matters little and Triton, Warp, Numba and NVRTC-compiled CUDA C all
 land on the roofline. Python's cost is in launch overhead (visible at small sizes) and in the
 temptation to write the algorithm as many small array operations, which is what limits the
-eager and partially compiled rungs. \texttt{torch.compile} removes most of that cost
-automatically for the roll formulation, but not for the gather formulation, where the index
-table doubles the traffic.
+eager and partially compiled rungs. \texttt{torch.compile} removes that cost
+automatically for the 2D roll formulation, but not for the gather formulation, where the index
+table doubles the traffic, and only partly in 3D (\compileRollThreeDPct\%).
 
 \paragraph{Threats to validity.}
 All measurements come from a single RTX~3070 Laptop GPU. Laptop GPUs adjust clocks with

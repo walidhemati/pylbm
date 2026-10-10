@@ -353,6 +353,8 @@ def write_results_tex(bench: dict, src: str, ladder: dict, val: dict) -> None:
         m["bestThreeDMLUPS"] = _fmt(b3["median"])
         m["bestThreeDName"] = LABEL[(b3["backend"], b3["variant"])]
         m["bestThreeDPct"] = f"{b3['pct_copy_bw']:.0f}"
+        if ("torch-compile", "roll") in d3:
+            m["compileRollThreeDPct"] = f"{d3[('torch-compile', 'roll')]['pct_copy_bw']:.0f}"
         b3h = [r for k, r in d3.items() if "16" in k[1]]
         if b3h:
             b3h = max(b3h, key=lambda r: r["median"])
