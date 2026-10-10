@@ -83,7 +83,7 @@
    "url": "https://github.com/lettucecfd/lettuce",
    "commit": "88a6559def2a49fd7f425fd05954ec1e3db2cdb6",
    "pinned": "88a6559def2a49fd7f425fd05954ec1e3db2cdb6",
-   "python": "/home/hemati/.venvs/cp-lettuce/bin/python",
+   "python": "~/.venvs/cp-lettuce/bin/python",
    "native_build_env": {
     "CUDA_HOME": "/usr/local/cuda",
     "CC": "gcc-13",
