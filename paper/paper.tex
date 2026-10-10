@@ -7,12 +7,13 @@
 \usepackage{siunitx}
 \usepackage{graphicx}
 \usepackage{xcolor}
+\usepackage{multicol}
 \usepackage[numbers,sort&compress]{natbib}
 \usepackage{hyperref}
 \usepackage{cleveref}
 \hypersetup{colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black}
 \graphicspath{{../figures/}}
-\newcommand{\fig}[1]{\IfFileExists{../figures/#1.pdf}{\includegraphics[width=0.88\linewidth]{#1.pdf}}%
+\newcommand{\fig}[2][0.88]{\IfFileExists{../figures/#2.pdf}{\includegraphics[width=#1\linewidth]{#2.pdf}}%
   {\fbox{\parbox{0.9\linewidth}{\centering figure #1 not generated yet}}}}
 
 \renewcommand{\topfraction}{0.9}
@@ -65,6 +66,22 @@
 \providecommand{\eqMaxBf}{--}\providecommand{\eqCount}{--}
 \providecommand{\bestSixteenMLUPS}{--}\providecommand{\bestSixteenName}{--}
 \providecommand{\bestSixteenPct}{--}
+% fallbacks for the head-to-head macros (results/counterparts.json may be missing)
+\expandafter\ifx\csname ifcpprovisional\endcsname\relax
+  \expandafter\newif\csname ifcpprovisional\endcsname\csname cpprovisionaltrue\endcsname\fi
+\providecommand{\cpFxCommit}{--}\providecommand{\cpFxSixteenCThreePct}{--}
+\providecommand{\cpFxSixteenCTwoPct}{--}\providecommand{\cpFxSixteenSThreePct}{--}
+\providecommand{\cpFxSixteenSTwoPct}{--}\providecommand{\cpFxThirtyTwoThreeMLUPS}{--}
+\providecommand{\cpFxThirtyTwoThreePct}{--}\providecommand{\cpFxThirtyTwoThreeSize}{--}
+\providecommand{\cpFxThirtyTwoTwoMLUPS}{--}\providecommand{\cpFxThirtyTwoTwoPct}{--}
+\providecommand{\cpFxThirtyTwoTwoSize}{--}\providecommand{\cpLtCommit}{--}
+\providecommand{\cpLtNativeThreePct}{--}\providecommand{\cpLtNativeThreeSize}{--}
+\providecommand{\cpLtNativeTwoPct}{--}\providecommand{\cpLtTorch}{--}
+\providecommand{\cpLtTorchThreePct}{--}\providecommand{\cpLtTorchTwoPct}{--}
+\providecommand{\cpLtVersion}{--}\providecommand{\cpPlan}{--}
+\providecommand{\cpPyHalfOverFxSThree}{--}\providecommand{\cpPyHalfOverFxSTwo}{--}
+\providecommand{\cpPyOverFxThree}{--}\providecommand{\cpPyOverFxTwo}{--}
+\providecommand{\cpPyOverLtNativeTwo}{--}\providecommand{\cpPyOverLtTorchTwo}{--}
 
 \title{Reaching the memory roofline with Python:\\
 a fused-kernel lattice-Boltzmann solver on a laptop GPU}
@@ -80,7 +97,7 @@ a fused-kernel lattice-Boltzmann solver on a laptop GPU}
 PROVISIONAL NUMBERS\\[2pt]
 \normalfont\small Performance figures in this draft come from a development benchmark run
 (\texttt{results/\benchSource}) on a GPU shared with other jobs. They will be replaced by the
-serial \texttt{bench/run.py --full} run on an idle GPU.}}
+serial \texttt{bench/run.py -{}-full} run on an idle GPU.}}
 \end{center}
 \fi
 
@@ -96,8 +113,12 @@ RTX~3070 Laptop GPU the best fp32 D2Q9 kernel (\bestFpThirtyTwoName) runs at
 \bestFpThirtyTwoMLUPS{} MLUPS, \bestFpThirtyTwoPct\% of the measured device copy bandwidth
 of \SI{\copyBW}{GB/s}; storing shifted populations $f_i-w_i$ in 16 bits halves the traffic and
 reaches \bestSixteenMLUPS{} MLUPS. D3Q19 reaches \bestThreeDMLUPS{} MLUPS
-(\bestThreeDPct\% of copy bandwidth). The Triton, Warp and Numba kernels are generated from a
-single symbolic description, so all four toolchains execute identical arithmetic. The
+(\bestThreeDPct\% of copy bandwidth). On the same GPU and with the same metric, the best fp32
+kernels run at \cpPyOverFxTwo{} (D2Q9) and \cpPyOverFxThree{} (D3Q19) times the rate of the
+hand-optimised OpenCL code FluidX3D and \cpPyOverLtNativeTwo{} times that of the native
+kernel of the PyTorch framework Lettuce (D2Q9). The Triton, Warp and Numba kernels are
+generated from a single symbolic description, so all four toolchains execute identical
+arithmetic. The
 solver is checked against Ghia et al.\ (1982), shear-wave decay, Poiseuille flow, the
 Sch\"afer--Turek cylinder benchmark and 3D Taylor--Green decay; along the way we document
 three boundary-condition defects of the original code.
@@ -112,9 +133,8 @@ in fp32. On every current GPU this places LBM firmly under the memory roof of th
 model~\citep{williams2009}. The relevant figure of merit is therefore the fraction of the
 attainable memory bandwidth a code sustains, not its FLOP rate.
 
-Python is the language in which many scientists prototype, but it is rarely the language of
-record for production LB codes, which tend to be C++/CUDA~\citep{bauer2021walberla} or use
-Python only to generate them~\citep{bauer2021lbmpy}. Python LB frameworks built on tensor
+Production LB codes tend to be C++/CUDA~\citep{bauer2021walberla} or use Python only to
+generate them~\citep{bauer2021lbmpy}; Python LB frameworks built on tensor
 libraries~\citep{bedrunka2021,ataei2024} trade some performance for flexibility. This paper
 starts from a small PyTorch lid-driven-cavity script (the earlier version of the present
 repository) that ran at a few hundred MLUPS and asks how far the same machine can be pushed
@@ -134,7 +154,8 @@ round-off.
 \item A kernel generator that prints the same fused update for Triton, Warp and Numba, so
 that differences between those backends are purely due to the compilers.
 \item A roofline analysis against the measured copy bandwidth showing that Python-driven
-kernels reach the same hardware efficiency as hand-written CUDA C.
+kernels reach the same hardware efficiency as hand-written CUDA C, and a same-GPU,
+same-metric head-to-head with FluidX3D~\citep{lehmann2022} and Lettuce~\citep{bedrunka2021}.
 \item Validation against five reference problems, and an account of the defects of the
 original code (mirrored axis, specular side walls, wrong lid density).
 \end{itemize}
@@ -162,18 +183,11 @@ frameworks such as lbmpy~\citep{bauer2021lbmpy} (used inside waLBerla~\citep{bau
 derive optimized kernels symbolically; our generator follows the same idea at a much smaller
 scale.
 
-\paragraph{Reduced precision.}
-Lehmann et al.~\citep{lehmann2022} show that FP32 arithmetic with 16-bit storage is accurate
-for many flows provided the populations are stored shifted, $f_i-w_i$ (the deviation from the
-rest equilibrium), which recovers the bits that would otherwise be spent on the constant
-$w_i$. We adopt this ``DDF shifting'' for our fp16/bf16 variants.
-
 \paragraph{Python toolchains.}
 PyTorch~\citep{paszke2019} with \texttt{torch.compile}~\citep{ansel2024} lowers tensor
 programs to Triton~\citep{tillet2019} kernels. Triton, NVIDIA Warp~\citep{warp2022},
 Numba~\citep{lam2015} and CuPy~\citep{okuta2017} let one write GPU kernels from Python;
-CuPy compiles CUDA C at run time through NVRTC. Lettuce~\citep{bedrunka2021} and
-XLB~\citep{ataei2024} are LB frameworks on PyTorch and JAX respectively.
+CuPy compiles CUDA C at run time through NVRTC.
 
 \section{Method}
 \subsection{Lattice Boltzmann equation}
@@ -262,9 +276,8 @@ The Triton, Warp and Numba kernels are printed by a small generator
 select-then-load statement (the select chooses between the neighbour's slot and the own
 opposite slot for wall links, so exactly one load is issued), followed by straight-line
 moments, equilibria and collision with constants folded in, and one store per population.
-The printers differ only in syntax: Triton operates on a block of \texttt{BLOCK} nodes along
-$x$ with masked vector loads, Warp and Numba on one node per thread, and Numba needs explicit
-\texttt{float32} literals to avoid silent promotion to fp64. The CUDA C kernel is written by
+Triton operates on a block of nodes along $x$, Warp and Numba on one node per thread (Numba
+needs explicit \texttt{float32} literals to avoid silent promotion to fp64). The CUDA C kernel is written by
 hand with \texttt{\#pragma unroll} loops over constant tables and specialised by preprocessor
 definitions; it does not share code with the generator, which makes it an independent check.
 
@@ -280,9 +293,11 @@ is behind a wall writes back into the node's own slot $\bar\imath$ including the
 term. Our AA kernels are bit-identical to the two-buffer kernels in fp32
 (test \texttt{test\_aa\_pattern\_bitwise\_equal\_to\_two\_buffer}). The traffic per update is
 unchanged, but the memory footprint halves.
-\paragraph{16-bit storage.} We store $h_i=f_i-w_i$ in fp16 or bf16 and compute in fp32,
-following~\citep{lehmann2022}: the conversion costs a few instructions and the traffic drops
-to \SI{36}{B} per D2Q9 node.
+\paragraph{16-bit storage.} Lehmann et al.~\citep{lehmann2022} show that FP32 arithmetic
+with 16-bit storage is accurate for many flows if the populations are stored shifted, as the
+deviation from the rest equilibrium, which recovers the bits otherwise spent on the constant
+$w_i$. We store $h_i=f_i-w_i$ in fp16 or bf16 and compute in fp32: the conversion costs a few
+instructions and the traffic drops to \SI{36}{B} per D2Q9 node.
 
 \subsection{Traffic model and measurement}
 \label{sec:model}
@@ -351,7 +366,7 @@ Re 100, $128^2$ & original code & \ghiaOneOrigLtwo & \ghiaOneOrigLinf\\
 
 \begin{figure}[htbp]
 \centering
-\fig{ghia}
+\fig[0.78]{ghia}
 \caption{Lid-driven cavity centreline profiles (lines, finest grid per Re) against Ghia et
 al.\ (1982) (circles). The outlying Re\,=\,400 point at $x=0.9063$ is the misprint excluded
 from the error norms.}
@@ -367,7 +382,7 @@ of the $\tau$ range.
 
 \begin{figure}[htbp]
 \centering
-\fig{viscosity}
+\fig[0.68]{viscosity}
 \caption{Shear-wave decay: measured against theoretical viscosity (left) and relative error
 (right).}
 \label{fig:visc}
@@ -384,7 +399,7 @@ against \poisFpSixtyFourHThirtyTwo{} in float64.
 
 \begin{figure}[htbp]
 \centering
-\fig{poiseuille}
+\fig[0.68]{poiseuille}
 \caption{Poiseuille channel: grid convergence (left) and profile (right).}
 \label{fig:pois}
 \end{figure}
@@ -402,7 +417,7 @@ resolution.
 
 \begin{figure}[htbp]
 \centering
-\fig{karman}
+\fig[0.8]{karman}
 \caption{Sch\"afer--Turek 2D-2 at Re\,=\,100: vorticity (units of $\bar U/D$) and the lift and
 drag coefficients over the measurement window.}
 \label{fig:karman}
@@ -419,7 +434,7 @@ they finish in reasonable time.
 
 \begin{figure}[htbp]
 \centering
-\fig{ladder}
+\fig[0.82]{ladder}
 \caption{The optimization ladder (median, whiskers min/max). Dashed: fp32 roofline at the
 measured copy bandwidth (\SI{\copyBW}{GB/s}); dotted: roofline for 16-bit storage.}
 \label{fig:ladder}
@@ -427,7 +442,7 @@ measured copy bandwidth (\SI{\copyBW}{GB/s}); dotted: roofline for 16-bit storag
 
 \begin{table}[htbp]
 \centering
-\small
+\footnotesize
 \caption{Lid-driven cavity throughput on the \gpuName{} (median of 5). B/LU: bytes per
 lattice update in the minimal traffic model; \% copy and \% spec: effective bandwidth as a
 fraction of the measured copy bandwidth and of the \SI{\specBW}{GB/s} specification.}
@@ -472,26 +487,64 @@ bandwidth) in fp32 and \bestThreeDSixteenMLUPS{} MLUPS (\bestThreeDSixteenPct\%)
 
 \begin{figure}[htbp]
 \centering
-\fig{scaling}
+\fig[0.85]{scaling}
 \caption{Throughput against lattice size for D2Q9 (left) and D3Q19 (right). Solid:
 two-buffer fp32; dashed: AA pattern; dotted: 16-bit storage. Horizontal lines: rooflines.}
 \label{fig:scaling}
 \end{figure}
 
-\paragraph{Comparison with published codes.} Obrecht et al.~\citep{obrecht2011} report up to
-86\% of the maximum global-memory throughput for D3Q19 on a GTX~295, and Lehmann et
-al.'s~\citep{lehmann2022} RTX~3090 result corresponds to roughly 89\% of that card's
-\SI{936}{GB/s} specification bandwidth (5493 MLUPS $\times$ \SI{152}{B}). Our fused kernels
-operate at \bestFpThirtyTwoPct\% of measured copy bandwidth on a laptop GPU, i.e.\ in the same
-efficiency range as these hand-optimised CUDA/OpenCL codes, and the AA and 16-bit variants
-compose with it as expected.
+\subsection{Head-to-head with FluidX3D and Lettuce on the same GPU}
+\label{sec:h2h}
+\ifcpprovisional{\color{red}\bfseries Provisional: short run (\texttt{bench/counterparts.py
+-{}-\cpPlan}, small lattices) on a shared GPU, to be replaced by the idle-GPU \texttt{-{}-full}
+run.}\fi{}
+Published efficiencies come from other GPUs (Obrecht et al.~\citep{obrecht2011}: up to 86\% of
+a GTX~295's global-memory throughput; Lehmann et al.~\citep{lehmann2022}: 5493 MLUPS
+$\times$ \SI{152}{B}, about 89\% of an RTX~3090's \SI{936}{GB/s}). We therefore ran two
+established codes on our GPU and scored them with our metric and timing protocol
+(\cref{sec:model}). FluidX3D (OpenCL, commit \cpFxCommit; in-place Esoteric-Pull
+streaming~\citep{lehmann2022esoteric}) runs its own benchmark case, a periodic box, with SRT
+(=\,BGK), FP32 arithmetic and FP32, FP16S or FP16C storage; we replaced only its benchmark
+\texttt{main\_setup} by a timing harness. Lettuce~\citep{bedrunka2021} (\cpLtVersion, commit
+\cpLtCommit, PyTorch \cpLtTorch) runs the case of its \texttt{lettuce benchmark} command
+(periodic Taylor--Green vortex, BGK, fp32) on its PyTorch path and with its generated native
+CUDA kernel. pylbm keeps the cavity, whose walls only add work; FluidX3D also reads a flag
+byte per cell that the model does not credit, and both counterparts synchronise host and
+device after every step, which matters only on small lattices.
+
+In fp32 (\cref{fig:counterparts}), FluidX3D reaches \cpFxThirtyTwoTwoMLUPS{} MLUPS
+(\cpFxThirtyTwoTwoPct\% of copy bandwidth) for D2Q9 at \cpFxThirtyTwoTwoSize{} and
+\cpFxThirtyTwoThreeMLUPS{} MLUPS (\cpFxThirtyTwoThreePct\%) for D3Q19 at
+\cpFxThirtyTwoThreeSize{}; pylbm's best fp32 kernel runs at \cpPyOverFxTwo{} and
+\cpPyOverFxThree{} times these rates. FP16S reaches \cpFxSixteenSTwoPct\% and
+\cpFxSixteenSThreePct\% (pylbm's best 16-bit kernel: \cpPyHalfOverFxSTwo{} and
+\cpPyHalfOverFxSThree{} times that), FP16C, whose format is converted in software,
+\cpFxSixteenCTwoPct\% and \cpFxSixteenCThreePct\%. Lettuce's native kernel reaches
+\cpLtNativeTwoPct\% (D2Q9) and \cpLtNativeThreePct\% (D3Q19, \cpLtNativeThreeSize), its PyTorch
+path, which streams with one \texttt{torch.roll} per population like our eager rung,
+\cpLtTorchTwoPct\% and \cpLtTorchThreePct\%; in D2Q9 pylbm is \cpPyOverLtNativeTwo{} and
+\cpPyOverLtTorchTwo{} times faster. FluidX3D's license permits use for public research and does
+not restrict publishing benchmark results; it requires that results of altered versions be
+published with the altered source (our harness is generated by \texttt{bench/counterparts.py})
+and asks publications to cite~\citep{lehmann2023thesis,lehmann2022esoteric,lehmann2022,
+lehmann2022iwocl,lehmann2021raindrops,lehmann2019msc,lehmann2022plic}.
+
+\begin{figure}[htbp]
+\centering
+\fig[0.8]{counterparts}
+\caption{Same-GPU head-to-head (median, whiskers min/max) at the largest lattice of the run.
+Colours: pylbm (Triton blue, CUDA C red); FluidX3D black; Lettuce grey. Hatched: 16-bit
+storage. Bars give the fraction of the measured copy bandwidth in the minimal traffic model,
+labels the MLUPS.}
+\label{fig:counterparts}
+\end{figure}
 
 \section{Discussion}
 \paragraph{What Python costs.} At the kernel level nothing: once the update is a single fused
-kernel, the toolchain matters little and Triton, Warp, Numba and NVRTC-compiled CUDA C all
-land on the roofline. Python's cost is in launch overhead (visible at small sizes) and in the
-temptation to write the algorithm as many small array operations, which is what limits the
-eager and partially compiled rungs. \texttt{torch.compile} removes that cost
+kernel, Triton, Warp, Numba and NVRTC-compiled CUDA C all land on the roofline, at \cpPyOverFxTwo{} (D2Q9) and
+\cpPyOverFxThree{} (D3Q19) times FluidX3D's fp32 rate on the same GPU (\cref{sec:h2h}). Python's cost is launch overhead
+(visible at small sizes) and the temptation to write the algorithm as many small array
+operations, which limits the eager rungs and Lettuce's PyTorch path. \texttt{torch.compile} removes that cost
 automatically for the 2D roll formulation, but not for the gather formulation, where the index
 table doubles the traffic, and only partly in 3D (\compileRollThreeDPct\%).
 
@@ -506,7 +559,8 @@ bandwidth. CUDA C is compiled with NVRTC through CuPy, not \texttt{nvcc}; both u
 NVVM back end, but default flags differ. The minimal traffic model ignores the (cached)
 re-reads of neighbouring rows and the boundary branches, so it is a lower bound on actual
 DRAM traffic. The benchmark is a lid-driven cavity: problems with complex geometry need a
-flag field or index lists and move more data.
+flag field or index lists and move more data. The counterparts run their own cases with
+their default settings; we did not tune them.
 
 \paragraph{Limitations and future work.}
 The fused kernels handle box geometries (walls, periodicity, moving lid, body force);
@@ -519,19 +573,23 @@ A lattice-Boltzmann solver written and driven from Python reaches the memory roo
 laptop GPU: fused kernels written in Triton, Warp, Numba or CUDA C all sustain close to the
 measured copy bandwidth, and 16-bit storage of shifted populations nearly doubles the update
 rate at a moderate accuracy cost (fp16) on the cavity benchmark. The path from a few hundred to
-several thousand MLUPS was mostly about data movement, not about the language.
+several thousand MLUPS was mostly about data movement, not about the language. On the same
+GPU the fused kernels run at \cpPyOverFxTwo{} (D2Q9) and \cpPyOverFxThree{} (D3Q19) times the
+fp32 rate of the hand-optimised FluidX3D (\cref{sec:h2h}).
 
 \section*{Code availability}
 Code, benchmark data and the scripts that generate every number and figure in this paper are
 available at \url{https://github.com/walidhemati/pylbm} under the MIT license.
-\texttt{bench/run.py --full} reproduces the performance data, \texttt{pylbm validate} the
-validation data, and \texttt{figures/make\_figures.py} the figures and
-\texttt{paper/results.tex}.
+\texttt{bench/run.py -{}-full} reproduces the performance data,
+\texttt{bench/counterparts.py -{}-full} the head-to-head, \texttt{pylbm validate} the validation
+data, and \texttt{figures/make\_figures.py} the figures and \texttt{paper/results.tex}.
 
-{\small
-\setlength{\bibsep}{1.5pt}
+{\footnotesize
+\setlength{\bibsep}{1pt}
 \bibliographystyle{unsrtnat}
+\begin{multicols}{2}
 \bibliography{references}
+\end{multicols}
 }
 
 \end{document}

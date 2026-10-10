@@ -117,6 +117,11 @@ Median of 5 timed runs on the NVIDIA GeForce RTX 3070 Laptop GPU; ceiling = meas
 
 ![Throughput against lattice size](figures/scaling.png)
 
+**Same-GPU head-to-head.** `bench/counterparts.py` runs FluidX3D (OpenCL) and Lettuce (PyTorch,
+plus its native CUDA kernel) on the same GPU and scores them with the same metric
+(`results/counterparts.json`, `figures/counterparts.png`; currently a provisional shared-GPU
+quick run, see paper Sec. 6.1).
+
 ## How it works
 
 LBM is bandwidth-bound: a D2Q9 update must read 9 and write 9 populations, 72 B in fp32,
@@ -147,6 +152,7 @@ of bouncing back, and its lid density uses the wrong populations.
 
 ```bash
 python bench/run.py --full          # idle GPU, < 15 min -> results/rtx3070-laptop.json
+python bench/counterparts.py --full # idle GPU; needs ../_ref/{FluidX3D,lettuce} + ~/.venvs/cp-lettuce
 pylbm validate                      # -> results/validation.json, results/karman_vorticity.npz
 python figures/make_figures.py      # -> figures/*.pdf|png, paper/results.tex, README tables
 python figures/make_hero.py         # -> docs/media/hero.gif

@@ -5,6 +5,7 @@
 Benchmark data: ``results/rtx3070-laptop.json`` (the publishable ``--full`` run) if it
 exists, otherwise the newest provisional run (``dev.json`` / ``quick.json``). Validation
 data: ``results/validation.json`` (``pylbm validate``) and ``results/karman_vorticity.npz``.
+Head-to-head with FluidX3D and Lettuce: ``results/counterparts.json`` (``bench/counterparts.py``).
 Numbers reach the paper only through the macros written here.
 """
 
@@ -278,12 +279,126 @@ def fig_karman(val: dict) -> None:
     save(fig, "karman")
 
 
+# ----------------------------------------------------------------------------- counterparts
+CP_TAG = {  # (code, variant) -> (macro tag, label, colour, hatch)
+    ("pylbm", "triton fused"): ("PyTriton", "pylbm Triton fused", COLORS["triton"], ""),
+    ("pylbm", "cupy-cuda-c fused-aa"): ("PyCudaAA", "pylbm CUDA C fused AA",
+                                        COLORS["cupy-cuda-c"], ""),
+    ("FluidX3D", "FP32/FP32"): ("FxThirtyTwo", "FluidX3D FP32/FP32", "#000000", ""),
+    ("Lettuce", "native CUDA"): ("LtNative", "Lettuce native CUDA", "#555555", ""),
+    ("Lettuce", "PyTorch"): ("LtTorch", "Lettuce PyTorch", "#aaaaaa", ""),
+    ("pylbm", "triton fused-fp16"): ("PyTritonHalf", "pylbm Triton fp16", COLORS["triton"],
+                                     "///"),
+    ("pylbm", "cupy-cuda-c fused-aa-fp16"): ("PyCudaAAHalf", "pylbm CUDA C AA fp16",
+                                             COLORS["cupy-cuda-c"], "///"),
+    ("FluidX3D", "FP32/FP16S"): ("FxSixteenS", "FluidX3D FP32/FP16S", "#000000", "///"),
+    ("FluidX3D", "FP32/FP16C"): ("FxSixteenC", "FluidX3D FP32/FP16C", "#000000", "..."),
+}
+CP_LAT = {"D2Q9": "Two", "D3Q19": "Three"}
+
+
+def load_counterparts() -> dict | None:
+    p = RES / "counterparts.json"
+    return json.loads(p.read_text()) if p.exists() else None
+
+
+def cp_select(cp: dict) -> dict[str, dict[tuple[str, str], dict]]:
+    """Per lattice and (code, variant): the run on the largest lattice."""
+    out: dict[str, dict[tuple[str, str], dict]] = {}
+    for r in cp["runs"]:
+        key = (r["code"], r["variant"])
+        if key not in CP_TAG:
+            continue
+        sel = out.setdefault(r["lattice"], {})
+        if key not in sel or np.prod(r["size"]) > np.prod(sel[key]["size"]):
+            sel[key] = r
+    return out
+
+
+def _size_tex(size: list[int]) -> str:
+    return f"${size[0]}^{len(size)}$" if len(set(size)) == 1 else \
+        "$" + r"\times".join(map(str, size)) + "$"
+
+
+def fig_counterparts(cp: dict) -> None:
+    sel = cp_select(cp)
+    lats = [lat for lat in ("D2Q9", "D3Q19") if lat in sel]
+    if not lats:
+        return
+    fig, axes = plt.subplots(1, len(lats), figsize=(FULL, 2.7), sharex=True, squeeze=False)
+    for ax, lat in zip(axes[0], lats, strict=True):
+        keys = [k for k in CP_TAG if k in sel[lat]]
+        ref = max(np.prod(sel[lat][k]["size"]) for k in keys)
+        y = np.arange(len(keys))[::-1]
+        for yi, k in zip(y, keys, strict=True):
+            r = sel[lat][k]
+            _, lab, col, hatch = CP_TAG[k]
+            f = r["pct_copy_bw"] / r["median"]  # % copy per MLUPS
+            ax.barh(yi, r["pct_copy_bw"], color=col if not hatch else "white",
+                    edgecolor=col, hatch=hatch, lw=0.8,
+                    xerr=[[(r["median"] - r["min"]) * f], [(r["max"] - r["median"]) * f]],
+                    error_kw={"lw": 0.6, "capsize": 1.5})
+            txt = f"{r['median']:,.0f}"
+            if np.prod(r["size"]) != ref:
+                txt += f" ({'x'.join(map(str, r['size']))})"
+            ax.text(r["max"] * f + 3.5, yi, txt, va="center", fontsize=6)
+        ax.set_yticks(y, [CP_TAG[k][1] for k in keys], fontsize=7)
+        ax.axvline(100, color="k", ls="--", lw=0.9)
+        side = round(ref ** (1 / (2 if lat == "D2Q9" else 3)))
+        ax.set_title(f"{lat}, {side}$^{2 if lat == 'D2Q9' else 3}$ (labels: MLUPS)", fontsize=8)
+        ax.set_xlim(0, 135)
+    if cp.get("provisional", True):
+        fig.text(0.5, 0.5, "PROVISIONAL (shared-GPU quick run)", color="red", alpha=0.35,
+                 fontsize=16, ha="center", va="center", rotation=12)
+    fig.supxlabel("% of measured copy bandwidth (minimal traffic model); dashed: roofline",
+                  fontsize=8)
+    fig.tight_layout()
+    save(fig, "counterparts")
+
+
+def counterpart_macros(cp: dict) -> dict[str, str]:
+    m: dict[str, str] = {}
+    sel = cp_select(cp)
+    for lat, runs in sel.items():
+        lt = CP_LAT[lat]
+        for k, r in runs.items():
+            tag = CP_TAG[k][0]
+            m[f"cp{tag}{lt}MLUPS"] = _fmt(r["median"])
+            m[f"cp{tag}{lt}Pct"] = f"{r['pct_copy_bw']:.0f}"
+            m[f"cp{tag}{lt}Size"] = _size_tex(r["size"])
+
+        def get(key: tuple[str, str], runs: dict = runs) -> float | None:
+            return runs[key]["median"] if key in runs else None
+
+        py32 = max(filter(None, (get(("pylbm", "triton fused")),
+                                 get(("pylbm", "cupy-cuda-c fused-aa")))), default=None)
+        py16 = max(filter(None, (get(("pylbm", "triton fused-fp16")),
+                                 get(("pylbm", "cupy-cuda-c fused-aa-fp16")))), default=None)
+        for name, num, den in (("PyOverFx", py32, get(("FluidX3D", "FP32/FP32"))),
+                               ("PyHalfOverFxS", py16, get(("FluidX3D", "FP32/FP16S"))),
+                               ("PyOverLtNative", py32, get(("Lettuce", "native CUDA"))),
+                               ("PyOverLtTorch", py32, get(("Lettuce", "PyTorch")))):
+            if num and den:
+                ratio = num / den
+                m[f"cp{name}{lt}"] = f"{ratio:.2f}" if ratio < 10 else f"{ratio:.0f}"
+    fx = cp["counterparts"]["FluidX3D"]
+    lt_ = cp["counterparts"]["Lettuce"]
+    m["cpFxCommit"] = (fx.get("commit") or fx["pinned"])[:7]
+    m["cpLtCommit"] = (lt_.get("commit") or lt_["pinned"])[:7]
+    m["cpLtVersion"] = str(lt_.get("lettuce", "--")).split("+")[0]
+    m["cpLtTorch"] = str(lt_.get("torch", "--"))
+    m["cpDate"] = cp["machine"].get("date", "")[:10]
+    m["cpPlan"] = cp.get("plan", "--")
+    return m
+
+
 # ----------------------------------------------------------------------------- results.tex
 def _fmt(v: float, nd: int = 0) -> str:
     return f"{v:,.{nd}f}".replace(",", "{,}")
 
 
-def write_results_tex(bench: dict, src: str, ladder: dict, val: dict) -> None:
+def write_results_tex(bench: dict, src: str, ladder: dict, val: dict,
+                      cp: dict | None = None) -> None:
     copy_bw = bench["ceiling"]["copy_bandwidth_GBs"]
     spec_bw = bench["ceiling"]["spec_bandwidth_GBs"]
     m: dict[str, str] = {}
@@ -422,10 +537,16 @@ def write_results_tex(bench: dict, src: str, ladder: dict, val: dict) -> None:
         m["eqMaxFpSixteen"] = f"{max(f16):.1e}" if f16 else "--"
         m["eqMaxBf"] = f"{max(bf):.1e}" if bf else "--"
         m["eqCount"] = str(len({(r['backend'], r['variant']) for r in eq}))
+    if cp:
+        m.update(counterpart_macros(cp))
+    cp_prov = bool(cp.get("provisional", True)) if cp else True
     lines = ["% GENERATED by figures/make_figures.py -- do not edit by hand.",
-             f"% benchmark source: results/{src}; validation: results/validation.json",
+             f"% benchmark source: results/{src}; validation: results/validation.json"
+             + ("; head-to-head: results/counterparts.json" if cp else ""),
              r"\newif\ifprovisional",
-             r"\provisionaltrue" if prov else r"\provisionalfalse"]
+             r"\provisionaltrue" if prov else r"\provisionalfalse",
+             r"\newif\ifcpprovisional",
+             r"\cpprovisionaltrue" if cp_prov else r"\cpprovisionalfalse"]
     for key, val_ in sorted(m.items()):
         lines.append(f"\\newcommand{{\\{key}}}{{{val_}}}")
     (PAPER / "results.tex").write_text("\n".join(lines) + "\n")
@@ -541,7 +662,10 @@ def main() -> None:
     fig_viscosity(val)
     fig_poiseuille(val)
     fig_karman(val)
-    write_results_tex(bench, src, ladder, val)
+    cp = load_counterparts()
+    if cp:
+        fig_counterparts(cp)
+    write_results_tex(bench, src, ladder, val, cp)
     write_readme(bench, src, ladder, val)
 
 
